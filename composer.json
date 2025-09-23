@@ -1,0 +1,20 @@
+{
+    "name": "your-vendor/smtp-mailer",
+    "description": "A PHP web application for sending emails via SMTP with profile management and API.",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "phpmailer/phpmailer": "^6.5"
+    },
+    "authors": [
+        {
+            "name": "Ivan Lapis",
+            "email": "ivan@terrantech.ca"
+        }
+    ],
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true
+    }
+}

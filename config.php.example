@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * Core Configuration File
+ *
+ * This file contains the primary configuration for the application,
+ * including database credentials and other important settings.
+ */
+
+// --- Database Configuration ---
+// Replace these with your actual database credentials.
+define('DB_HOST', '127.0.0.1'); // Or your database server IP/hostname
+define('DB_NAME', 'smtp_mailer'); // The name of the database you created
+define('DB_USER', 'root');       // Your database username
+define('DB_PASS', '');           // Your database password
+define('DB_CHARSET', 'utf8mb4');
+
+// --- Application Configuration ---
+// IMPORTANT: Change this to a random 32-character string.
+// This key is used to encrypt and decrypt SMTP passwords in the database.
+// You can generate one here: https://www.random.org/strings/
+define('ENCRYPTION_KEY', 'change-this-to-a-random-32-char-string');
+
+// --- PDO Database Connection ---
+// This section establishes the connection to the database.
+$dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
+
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => false,
+];
+
+try {
+    $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+} catch (\PDOException $e) {
+    // In a real production environment, you would log this error and
+    // show a generic error message to the user.
+    throw new \PDOException($e->getMessage(), (int)$e->getCode());
+}
+
+// --- Helper Functions (can be moved to a separate file later) ---
+
+/**
+ * A simple encryption function.
+ * @param string $string The string to encrypt.
+ * @return string The encrypted string.
+ */
+function simple_encrypt(string $string): string {
+    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
+    $encrypted = openssl_encrypt($string, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+    return base64_encode($encrypted . '::' . $iv);
+}
+
+/**
+ * A simple decryption function.
+ * @param string $string The string to decrypt.
+ * @return string|false The decrypted string or false on failure.
+ */
+function simple_decrypt(string $string) {
+    list($encrypted_data, $iv) = explode('::', base64_decode($string), 2);
+    if (!$iv) {
+        // Handle cases where decryption might fail if the format is wrong
+        return false;
+    }
+    return openssl_decrypt($encrypted_data, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+}
+
+?>
