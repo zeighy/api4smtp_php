@@ -1,6 +1,8 @@
 # PHP SMTP Mailer - API & Web UI
 A self-hosted, robust PHP application for sending emails via API on your SMTP server. It features a secure API for integration with third-party applications and a web-based admin panel for managing sending profiles, API tokens, and monitoring email activity.
 
+NOTE: Not a replacement for more robust solutions like SendGrid, MailJet, MailGun, or similar services. Sending bulk email through your email server can get it blacklisted and prevent it from being able to deliver legitimate non-bulk emails to real recipients.
+
 -----
 
 ## Overview
@@ -315,4 +317,5 @@ In this example, content_b64 would be the base64-encoded string of the image, an
 This application is provided free of charge and carries no warranty or support for personal, non-commercial, and home-lab use. 
 
 If you wish to use this software in a commercial, business, or production environment, please send an email to ivan@terrantech.ca for licensing information.
-In most cases of commercial or business use, you are likely going to be using more robust solutions like SendGrid, MailGun, or MailJet. (not an endorsement, just examples)
+
+_ In most cases of commercial or business use, you are likely going to be using more robust solutions like SendGrid, MailGun, MailJet or similar services instead of something like this. (not an endorsement, just examples) Additionally, sending bulk email through your email server will either get you banned, blacklisted, or catgorized as spam/junk which will reduce your ability to send legitimate non-bulk emails or prevent delivery altogether. Use of this app does not replace proper email marketing tools and platforms. _
