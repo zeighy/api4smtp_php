@@ -24,7 +24,12 @@ try {
     $pdo->beginTransaction();
 
     // Fetch a batch of emails from the queue
-    $stmt = $pdo->prepare("SELECT * FROM email_queue ORDER BY created_at ASC LIMIT " . QUEUE_BATCH_SIZE);
+    $stmt = $pdo->prepare(
+        "SELECT id, profile_id, ip_address, submitted_at, recipient_email, cc_email, subject, body_html, body_text
+         FROM email_queue
+         ORDER BY submitted_at ASC
+         LIMIT " . QUEUE_BATCH_SIZE
+    );
     $stmt->execute();
     $emails_to_process = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -39,7 +44,7 @@ try {
     // Prepare statements for reuse
     $profile_stmt = $pdo->prepare("SELECT * FROM sending_profiles WHERE id = ?");
     $log_stmt = $pdo->prepare(
-        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, subject, status, status_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, subject, status, status_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $delete_stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ?");
 
@@ -58,6 +63,8 @@ try {
             echo " - FAILED: {$status_info}\n";
         } else {
             // 2. Decrypt the SMTP password
+            // Note: The simple_decrypt function is defined in config.php.example
+            // and must be present in your config.php file.
             $smtp_password = simple_decrypt($profile['smtp_pass']);
             if ($smtp_password === false) {
                 $status_info = 'Failed to decrypt SMTP password. Check encryption key.';
@@ -82,6 +89,9 @@ try {
                 // Recipients
                 $mail->setFrom($profile['from_email'], $profile['from_name']);
                 $mail->addAddress($email['recipient_email']);
+                if (!empty($email['cc_email'])) {
+                    $mail->addCC($email['cc_email']);
+                }
 
                 // Content
                 $mail->isHTML(!empty($email['body_html']));
@@ -110,6 +120,7 @@ try {
             $email['submitted_at'],
             $status === 'sent' ? date('Y-m-d H:i:s') : null,
             $email['recipient_email'],
+            $email['cc_email'],
             $email['subject'],
             $status,
             $status_info

@@ -182,6 +182,7 @@ Tokens are generated from the Admin Panel under Profiles -> Manage Tokens.
 | `subject`     | string  | Yes      | The subject of the email.               |
 | `body_html`   | string  | No* | The HTML content of the email.          |
 | `body_text`   | string  | No* | The plain-text version of the email.    |
+| `cc_email`    | string  | No       | A CC recipient's email address.         |
 
 *At least one of body_html or body_text must be provided.
 

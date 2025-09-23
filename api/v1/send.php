@@ -64,7 +64,10 @@ $subject = trim($json_data['subject'] ?? '');
 $body_html = trim($json_data['body_html'] ?? '');
 $body_text = trim($json_data['body_text'] ?? '');
 $cc_email = filter_var($json_data['cc_email'] ?? null, FILTER_VALIDATE_EMAIL);
-$bcc_email = filter_var($json_data['bcc_email'] ?? null, FILTER_VALIDATE_EMAIL);
+
+if (isset($json_data['cc_email']) && !$cc_email) {
+    send_json_error(400, 'A valid `cc_email` must be provided if the key exists.');
+}
 
 if (!$profile_id) {
     send_json_error(400, '`profile_id` is required and must be an integer.');
@@ -81,20 +84,26 @@ if (empty($body_html) && empty($body_text)) {
 
 
 // --- 4. Token and Profile Verification ---
+// Fetches the profile's rate limit settings and the token hash in one query.
+// This is more efficient than multiple queries.
 $stmt = $pdo->prepare(
-    "SELECT p.*, t.token_hash FROM sending_profiles p JOIN api_tokens t ON p.id = t.profile_id WHERE p.id = ? AND t.token_prefix = ?"
+    "SELECT p.rate_limit_count, p.rate_limit_interval, t.token_hash
+     FROM sending_profiles p
+     JOIN api_tokens t ON p.id = t.profile_id
+     WHERE p.id = ? AND t.token_prefix = ?"
 );
 $stmt->execute([$profile_id, $prefix]);
-$profile = $stmt->fetch(PDO::FETCH_ASSOC);
+$profile_data = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!$profile || !password_verify($secret, $profile['token_hash'])) {
+// Verify that the profile exists and the token is valid.
+if (!$profile_data || !password_verify($secret, $profile_data['token_hash'])) {
     send_json_error(403, 'Forbidden. The provided token is not valid for the specified profile_id.');
 }
 
 $client_ip = get_client_ip();
 
 // --- 5. Rate Limiting ---
-if ($profile['rate_limit_count'] > 0) {
+if ($profile_data['rate_limit_count'] > 0) {
     // First, check if this IP is already on a temporary block.
     $check_stmt = $pdo->prepare("SELECT id FROM rate_limit_tracker WHERE ip_address = ? AND profile_id = ? AND blocked_until > NOW()");
     $check_stmt->execute([$client_ip, $profile_id]);
@@ -106,10 +115,10 @@ if ($profile['rate_limit_count'] > 0) {
     $stmt = $pdo->prepare(
         "SELECT COUNT(*) FROM email_queue WHERE profile_id = ? AND ip_address = ? AND submitted_at >= NOW() - INTERVAL ? MINUTE"
     );
-    $stmt->execute([$profile_id, $client_ip, $profile['rate_limit_interval']]);
+    $stmt->execute([$profile_id, $client_ip, $profile_data['rate_limit_interval']]);
     $queued_count = $stmt->fetchColumn();
 
-    if ($queued_count >= $profile['rate_limit_count']) {
+    if ($queued_count >= $profile_data['rate_limit_count']) {
         // Log the rate limit violation and block the IP
         $block_duration_minutes = 5; // Block for 5 minutes by default
         $insert_stmt = $pdo->prepare(
@@ -126,13 +135,14 @@ $message_id = bin2hex(random_bytes(18)); // Generate a 36-char UUID
 
 try {
     $stmt = $pdo->prepare(
-        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, subject, body_html, body_text) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $stmt->execute([
         $message_id,
         $profile_id,
         $client_ip,
         $to_email,
+        $cc_email ?: null,
         $subject,
         $body_html ?: null,
         $body_text ?: null
