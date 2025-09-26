@@ -13,12 +13,12 @@ $stmt_queue = $pdo->query("SELECT COUNT(*) FROM email_queue");
 $queue_count = $stmt_queue->fetchColumn();
 
 // Count emails sent today
-$stmt_sent = $pdo->prepare("SELECT COUNT(*) FROM email_history WHERE status = 'sent' AND DATE(sent_at) = CURDATE()");
+$stmt_sent = $pdo->prepare("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND DATE(sent_at) = CURDATE()");
 $stmt_sent->execute();
 $sent_today = $stmt_sent->fetchColumn();
 
 // Count emails that failed today
-$stmt_failed = $pdo->prepare("SELECT COUNT(*) FROM email_history WHERE status = 'failed' AND DATE(sent_at) = CURDATE()");
+$stmt_failed = $pdo->prepare("SELECT COUNT(*) FROM email_logs WHERE status = 'failed' AND DATE(sent_at) = CURDATE()");
 $stmt_failed->execute();
 $failed_today = $stmt_failed->fetchColumn();
 
