@@ -16,7 +16,7 @@ $offset = ($page - 1) * $limit;
 // Filter parameters
 $filter_profile = $_GET['profile_id'] ?? '';
 $filter_status = $_GET['status'] ?? '';
-$filter_ip = $_GET['request_ip'] ?? '';
+$filter_ip = $_GET['ip_address'] ?? '';
 $search_term = $_GET['search'] ?? '';
 
 // Build the WHERE clause for the query
@@ -24,19 +24,19 @@ $where_clauses = [];
 $params = [];
 
 if (!empty($filter_profile)) {
-    $where_clauses[] = "h.profile_id = ?";
+    $where_clauses[] = "l.profile_id = ?";
     $params[] = $filter_profile;
 }
 if (!empty($filter_status)) {
-    $where_clauses[] = "h.status = ?";
+    $where_clauses[] = "l.status = ?";
     $params[] = $filter_status;
 }
 if (!empty($filter_ip)) {
-    $where_clauses[] = "h.request_ip LIKE ?";
+    $where_clauses[] = "l.ip_address LIKE ?";
     $params[] = "%" . $filter_ip . "%";
 }
 if (!empty($search_term)) {
-    $where_clauses[] = "(h.to_email LIKE ? OR h.subject LIKE ?)";
+    $where_clauses[] = "(l.recipient_email LIKE ? OR l.subject LIKE ?)";
     $params[] = "%" . $search_term . "%";
     $params[] = "%" . $search_term . "%";
 }
@@ -44,24 +44,24 @@ if (!empty($search_term)) {
 $where_sql = count($where_clauses) > 0 ? "WHERE " . implode(' AND ', $where_clauses) : '';
 
 // --- Count total records for pagination ---
-$count_sql = "SELECT COUNT(*) FROM email_history h " . $where_sql;
+$count_sql = "SELECT COUNT(*) FROM email_logs l " . $where_sql;
 $count_stmt = $pdo->prepare($count_sql);
 $count_stmt->execute($params);
 $total_records = $count_stmt->fetchColumn();
 $total_pages = ceil($total_records / $limit);
 
 // --- Fetch records for the current page ---
-$history_sql = "SELECT h.*, p.profile_name FROM email_history h 
-                LEFT JOIN sending_profiles p ON h.profile_id = p.id 
+$logs_sql = "SELECT l.*, p.profile_name FROM email_logs l
+                LEFT JOIN sending_profiles p ON l.profile_id = p.id
                 $where_sql 
-                ORDER BY h.processed_at DESC 
+                ORDER BY l.submitted_at DESC
                 LIMIT ? OFFSET ?";
 $params[] = $limit;
 $params[] = $offset;
 
-$history_stmt = $pdo->prepare($history_sql);
-$history_stmt->execute($params);
-$history = $history_stmt->fetchAll(PDO::FETCH_ASSOC);
+$logs_stmt = $pdo->prepare($logs_sql);
+$logs_stmt->execute($params);
+$logs = $logs_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // --- Page Title ---
 $pageTitle = "Email History";
@@ -78,8 +78,8 @@ require_once __DIR__ . '/includes/header.php';
 
     <!-- Filter Form -->
     <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
-        <form action="email_history.php" method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <input type="text" name="search" placeholder="Search to/subject..." value="<?= htmlspecialchars($search_term) ?>" class="p-2 border rounded-md">
+        <form action="email_logs.php" method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <input type="text" name="search" placeholder="Search recipient/subject..." value="<?= htmlspecialchars($search_term) ?>" class="p-2 border rounded-md">
             <select name="profile_id" class="p-2 border rounded-md">
                 <option value="">All Profiles</option>
                 <?php foreach ($profiles as $profile): ?>
@@ -93,34 +93,34 @@ require_once __DIR__ . '/includes/header.php';
                 <option value="sent" <?= ($filter_status == 'sent') ? 'selected' : '' ?>>Sent</option>
                 <option value="failed" <?= ($filter_status == 'failed') ? 'selected' : '' ?>>Failed</option>
             </select>
-            <input type="text" name="request_ip" placeholder="Filter by IP..." value="<?= htmlspecialchars($filter_ip) ?>" class="p-2 border rounded-md">
+            <input type="text" name="ip_address" placeholder="Filter by IP..." value="<?= htmlspecialchars($filter_ip) ?>" class="p-2 border rounded-md">
             <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md">Filter</button>
         </form>
     </div>
 
-    <!-- History Table -->
+    <!-- Logs Table -->
     <div class="bg-white shadow-lg rounded-lg overflow-x-auto">
-        <table class="min-w-full leading-normal" id="history-table">
+        <table class="min-w-full leading-normal" id="logs-table">
             <thead>
                 <tr>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Recipient</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Subject</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Profile</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Request IP</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">IP Address</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Info</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($history)): ?>
+                <?php if (empty($logs)): ?>
                     <tr>
                         <td colspan="7" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">No records found.</td>
                     </tr>
                 <?php else: ?>
-                    <?php foreach ($history as $row): ?>
+                    <?php foreach ($logs as $row): ?>
                         <tr class="hover:bg-gray-50">
-                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['to_email']) ?></td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['recipient_email']) ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['subject']) ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['profile_name'] ?? 'N/A') ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
@@ -136,11 +136,11 @@ require_once __DIR__ . '/includes/header.php';
                                     </span>
                                 <?php endif; ?>
                             </td>
-                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['request_ip']) ?></td>
-                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= date('Y-m-d H:i', strtotime($row['processed_at'])) ?></td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['ip_address']) ?></td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= date('Y-m-d H:i', strtotime($row['sent_at'] ?? $row['submitted_at'])) ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
                                 <?php if ($row['status'] == 'failed'): ?>
-                                    <button onclick="showError(this)" data-error="<?= htmlspecialchars($row['error_message']) ?>" class="text-blue-500 hover:underline">View</button>
+                                    <button onclick="showError(this)" data-error="<?= htmlspecialchars($row['status_info']) ?>" class="text-blue-500 hover:underline">View</button>
                                 <?php endif; ?>
                             </td>
                         </tr>
@@ -214,7 +214,7 @@ function downloadCSV(csv, filename) {
 
 function exportTableToCSV(filename) {
     let csv = [];
-    const rows = document.querySelectorAll("#history-table tr");
+    const rows = document.querySelectorAll("#logs-table tr");
     for (let i = 0; i < rows.length; i++) {
         let row = [], cols = rows[i].querySelectorAll("td, th");
         // Skip the last column (Info button)
@@ -231,7 +231,7 @@ function exportTableToCSV(filename) {
 
 document.getElementById('export-btn').addEventListener('click', function() {
     const date = new Date().toISOString().slice(0, 10);
-    exportTableToCSV(`email_history_${date}.csv`);
+    exportTableToCSV(`email_logs_${date}.csv`);
 });
 </script>
 
