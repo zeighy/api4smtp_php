@@ -83,6 +83,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </button>
             </div>
         </form>
+        <div class="text-center mt-4">
+            <a href="help.php" class="text-sm text-blue-500 hover:underline">Need Help?</a>
+        </div>
     </div>
 
 </body>
