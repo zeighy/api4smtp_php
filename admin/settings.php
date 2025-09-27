@@ -4,9 +4,13 @@ require_once __DIR__ . '/../config.php';
 
 $pageTitle = "Application Settings";
 
-// Fetch current settings
-$stmt = $pdo->query("SELECT * FROM settings WHERE id = 1");
-$settings = $stmt->fetch(PDO::FETCH_ASSOC);
+// Fetch current settings into a key-value array
+$stmt = $pdo->query("SELECT setting_key, setting_value FROM settings");
+$settings_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$settings = [];
+foreach ($settings_raw as $row) {
+    $settings[$row['setting_key']] = $row['setting_value'];
+}
 
 $success_message = '';
 $error_message = '';
@@ -16,37 +20,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $admin_user = trim($_POST['admin_user']);
     $new_password = $_POST['admin_password'];
     $log_retention_days = filter_input(INPUT_POST, 'log_retention_days', FILTER_VALIDATE_INT);
-    $rate_limit_count = filter_input(INPUT_POST, 'rate_limit_count', FILTER_VALIDATE_INT);
-    $rate_limit_minutes = filter_input(INPUT_POST, 'rate_limit_minutes', FILTER_VALIDATE_INT);
 
     // Basic validation
-    if (empty($admin_user) || $log_retention_days === false || $rate_limit_count === false || $rate_limit_minutes === false) {
+    if (empty($admin_user) || $log_retention_days === false) {
         $error_message = "Please fill in all fields with valid values.";
     } else {
         try {
             // Start transaction
             $pdo->beginTransaction();
 
+            // Update admin username
+            $stmt_user = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'admin_user'");
+            $stmt_user->execute([$admin_user]);
+
+            // Update log retention days
+            $stmt_log = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'log_retention_days'");
+            $stmt_log->execute([$log_retention_days]);
+
+            // Update password if a new one is provided
             if (!empty($new_password)) {
-                // Hash the new password if it's provided
                 $password_hash = password_hash($new_password, PASSWORD_DEFAULT);
-                $update_stmt = $pdo->prepare(
-                    "UPDATE settings SET admin_user = ?, admin_password = ?, log_retention_days = ?, rate_limit_count = ?, rate_limit_minutes = ? WHERE id = 1"
-                );
-                $update_stmt->execute([$admin_user, $password_hash, $log_retention_days, $rate_limit_count, $rate_limit_minutes]);
-            } else {
-                // Update without changing the password
-                $update_stmt = $pdo->prepare(
-                    "UPDATE settings SET admin_user = ?, log_retention_days = ?, rate_limit_count = ?, rate_limit_minutes = ? WHERE id = 1"
-                );
-                $update_stmt->execute([$admin_user, $log_retention_days, $rate_limit_count, $rate_limit_minutes]);
+                $stmt_pass = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'admin_pass_hash'");
+                $stmt_pass->execute([$password_hash]);
             }
 
             $pdo->commit();
             $success_message = "Settings updated successfully!";
             // Re-fetch settings to display updated values
-            $stmt = $pdo->query("SELECT * FROM settings WHERE id = 1");
-            $settings = $stmt->fetch(PDO::FETCH_ASSOC);
+            $stmt = $pdo->query("SELECT setting_key, setting_value FROM settings");
+            $settings_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $settings = [];
+            foreach ($settings_raw as $row) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
 
         } catch (PDOException $e) {
             $pdo->rollBack();
@@ -96,22 +102,6 @@ require_once __DIR__ . '/includes/header.php';
                     <label for="log_retention_days" class="block text-gray-700 text-sm font-bold mb-2">Email Log Retention (Days):</label>
                     <input type="number" id="log_retention_days" name="log_retention_days" value="<?= htmlspecialchars($settings['log_retention_days']) ?>" required min="1" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
                     <p class="text-xs text-gray-500">Email history logs older than this will be deleted automatically.</p>
-                </div>
-            </fieldset>
-
-            <!-- API Rate Limiting -->
-            <fieldset class="mb-8">
-                <legend class="text-xl font-semibold text-gray-700 border-b-2 border-gray-200 pb-2 mb-4">API Rate Limiting</legend>
-                <p class="text-sm text-gray-600 mb-4">This sets a global rate limit for the send API. The limit is per IP address per sending profile.</p>
-                <div class="flex gap-4">
-                    <div class="flex-1">
-                         <label for="rate_limit_count" class="block text-gray-700 text-sm font-bold mb-2">Max Emails:</label>
-                         <input type="number" id="rate_limit_count" name="rate_limit_count" value="<?= htmlspecialchars($settings['rate_limit_count']) ?>" required min="0" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
-                    </div>
-                     <div class="flex-1">
-                         <label for="rate_limit_minutes" class="block text-gray-700 text-sm font-bold mb-2">Per # of Minutes:</label>
-                         <input type="number" id="rate_limit_minutes" name="rate_limit_minutes" value="<?= htmlspecialchars($settings['rate_limit_minutes']) ?>" required min="1" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
-                    </div>
                 </div>
             </fieldset>
 
