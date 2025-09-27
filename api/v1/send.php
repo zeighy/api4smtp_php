@@ -175,7 +175,7 @@ $message_id = bin2hex(random_bytes(18)); // Generate a 36-char UUID
 
 try {
     $stmt = $pdo->prepare(
-        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text, send_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text, send_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW()))"
     );
     $stmt->execute([
         $message_id,
@@ -186,11 +186,11 @@ try {
         $subject,
         $body_html ?: null,
         $body_text ?: null,
-        $send_at_time // If null, DB uses DEFAULT CURRENT_TIMESTAMP
+        $send_at_time
     ]);
 
     http_response_code(202);
-    echo json_encode(['status' => 'queued', 'message_id' => $message_id, 'send_at' => $send_at_time ?? 'now']);
+    echo json_encode(['status' => 'queued', 'message_id' => $message_id, 'send_at' => $send_at_time ?? date('Y-m-d H:i:s')]);
 
 } catch (PDOException $e) {
     // In a real app, log this error to a file
