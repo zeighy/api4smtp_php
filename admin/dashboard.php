@@ -18,7 +18,7 @@ $stmt_sent->execute();
 $sent_today = $stmt_sent->fetchColumn();
 
 // Count emails that failed today
-$stmt_failed = $pdo->prepare("SELECT COUNT(*) FROM email_logs WHERE status = 'failed' AND DATE(sent_at) = CURDATE()");
+$stmt_failed = $pdo->prepare("SELECT COUNT(*) FROM email_logs WHERE status = 'failed' AND DATE(submitted_at) = CURDATE()");
 $stmt_failed->execute();
 $failed_today = $stmt_failed->fetchColumn();
 
