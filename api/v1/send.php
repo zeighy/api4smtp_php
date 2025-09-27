@@ -138,20 +138,34 @@ if ($profile_data['rate_limit_count'] > 0) {
             send_json_error(429, 'Too Many Requests. Rate limit exceeded for this IP on this profile. Please try again later.');
 
         } elseif ($profile_data['rate_limit_strategy'] === 'DELAY') {
-            // For DELAY, we calculate a future send_at time.
-            $oldest_email_stmt = $pdo->prepare(
-                "SELECT submitted_at FROM email_queue
-                 WHERE profile_id = ? AND ip_address = ? AND submitted_at >= NOW() - INTERVAL ? MINUTE
-                 ORDER BY submitted_at ASC LIMIT 1"
-            );
-            $oldest_email_stmt->execute([$profile_id, $client_ip, $profile_data['rate_limit_interval']]);
-            $oldest_email_time_str = $oldest_email_stmt->fetchColumn();
+            // For DELAY, we calculate a future send_at time to stagger the emails.
 
-            if ($oldest_email_time_str) {
-                $release_time = new DateTime($oldest_email_time_str);
-                $release_time->add(new DateInterval('PT' . $profile_data['rate_limit_interval'] . 'M'));
-                $send_at_time = $release_time->format('Y-m-d H:i:s');
+            // 1. Find the last scheduled send time for this IP on this profile.
+            $last_send_stmt = $pdo->prepare(
+                "SELECT MAX(send_at) FROM email_queue WHERE profile_id = ? AND ip_address = ?"
+            );
+            $last_send_stmt->execute([$profile_id, $client_ip]);
+            $last_send_at_str = $last_send_stmt->fetchColumn();
+
+            // 2. Determine the base time for our calculation. It should be the later of now or the last scheduled time.
+            $base_time = new DateTime();
+            if ($last_send_at_str) {
+                $last_send_time = new DateTime($last_send_at_str);
+                if ($last_send_time > $base_time) {
+                    $base_time = $last_send_time;
+                }
             }
+
+            // 3. Calculate the staggering interval in seconds.
+            // This ensures we don't exceed the rate limit over time.
+            $stagger_interval_seconds = (int)ceil(($profile_data['rate_limit_interval'] * 60) / $profile_data['rate_limit_count']);
+            if ($stagger_interval_seconds < 1) {
+                $stagger_interval_seconds = 1; // Ensure at least 1 second stagger
+            }
+
+            // 4. Add the interval to the base time to get the new send_at time.
+            $base_time->add(new DateInterval('PT' . $stagger_interval_seconds . 'S'));
+            $send_at_time = $base_time->format('Y-m-d H:i:s');
         }
     }
 }
