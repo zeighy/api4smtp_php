@@ -20,13 +20,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $smtp_user = trim($_POST['smtp_user']);
     $smtp_pass = trim($_POST['smtp_pass']); // Don't encrypt yet
     $smtp_encryption = in_array($_POST['smtp_encryption'], ['none', 'ssl', 'tls']) ? $_POST['smtp_encryption'] : 'tls';
+    $rate_limit_count = filter_var(trim($_POST['rate_limit_count']), FILTER_VALIDATE_INT);
+    $rate_limit_interval = filter_var(trim($_POST['rate_limit_interval']), FILTER_VALIDATE_INT);
+    $rate_limit_strategy = in_array($_POST['rate_limit_strategy'], ['REJECT', 'DELAY']) ? $_POST['rate_limit_strategy'] : 'REJECT';
 
     // --- Add new profile ---
     if ($action === 'add') {
         if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user && $smtp_pass) {
             $encrypted_pass = simple_encrypt($smtp_pass);
-            $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            if ($stmt->execute([$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption])) {
+            $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_encryption, rate_limit_count, rate_limit_interval, rate_limit_strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            if ($stmt->execute([$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy])) {
                 $success_message = 'Profile created successfully!';
             } else {
                 $error_message = 'Failed to create profile.';
@@ -39,15 +42,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // --- Update existing profile ---
     elseif ($action === 'edit' && $profile_id) {
         if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user) {
+            $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy];
+
             if (!empty($smtp_pass)) {
                 // If a new password is provided, encrypt it and update
                 $encrypted_pass = simple_encrypt($smtp_pass);
-                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_encryption=? WHERE id=?");
-                $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption, $profile_id];
+                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=?, smtp_pass=? WHERE id=?");
+                array_push($params, $encrypted_pass, $profile_id);
             } else {
                 // If password is blank, don't update it
-                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=? WHERE id=?");
-                $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $smtp_encryption, $profile_id];
+                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=? WHERE id=?");
+                $params[] = $profile_id;
             }
 
             if ($stmt->execute($params)) {
@@ -150,8 +155,33 @@ include __DIR__ . '/includes/header.php';
                 </select>
             </div>
 
+            <!-- Rate Limiting -->
+            <div class="md:col-span-2 border-t pt-6 mt-4">
+                <h3 class="text-lg font-medium text-gray-800 mb-2">Rate Limiting</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label for="rate_limit_count" class="block text-sm font-medium text-gray-700">Requests per Interval</label>
+                        <input type="number" id="rate_limit_count" name="rate_limit_count" value="<?= htmlspecialchars($profile_to_edit['rate_limit_count'] ?? '100') ?>" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Number of emails allowed per interval. Set to 0 to disable.</p>
+                    </div>
+                    <div>
+                        <label for="rate_limit_interval" class="block text-sm font-medium text-gray-700">Interval (Minutes)</label>
+                        <input type="number" id="rate_limit_interval" name="rate_limit_interval" value="<?= htmlspecialchars($profile_to_edit['rate_limit_interval'] ?? '60') ?>" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">The time frame for the rate limit in minutes.</p>
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="rate_limit_strategy" class="block text-sm font-medium text-gray-700">Rate Limit Strategy</label>
+                        <select id="rate_limit_strategy" name="rate_limit_strategy" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                            <option value="REJECT" <?= ($profile_to_edit['rate_limit_strategy'] ?? 'REJECT') == 'REJECT' ? 'selected' : '' ?>>Reject</option>
+                            <option value="DELAY" <?= ($profile_to_edit['rate_limit_strategy'] ?? '') == 'DELAY' ? 'selected' : '' ?>>Delay</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Choose whether to reject or delay emails that exceed the rate limit.</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Form Actions -->
-            <div class="md:col-span-2 flex items-center justify-end space-x-4">
+            <div class="md:col-span-2 flex items-center justify-end space-x-4 mt-6">
                  <?php if ($profile_to_edit): ?>
                     <a href="profiles.php" class="bg-gray-200 hover:bg-gray-300 text-black font-bold py-2 px-4 rounded">Cancel</a>
                 <?php endif; ?>
