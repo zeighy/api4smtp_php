@@ -102,7 +102,7 @@ This will create all the necessary tables.
 
 3. Configuration
 
-Rename `config.php.example` to `config.php` (if you have an example file, otherwise create it).
+Rename `config.php.example` to `config.php`.
 
 Edit `config.php` and fill in your database credentials:
 
@@ -163,7 +163,9 @@ Access the admin panel by navigating to `https://yourdomain.com/admin/login.php`
 
 The API uses Bearer Token authentication. You must include an Authorization header with every request.
 
-`Authorization: Bearer st-your-generated-api-token`
+The token has the format `<prefix>.<secret>`. The `prefix` is used to identify the token in the database, and the `secret` is the part that is verified.
+
+`Authorization: Bearer your-prefix.your-secret-token`
 
 Tokens are generated from the Admin Panel under Profiles -> Manage Tokens.
 
@@ -181,9 +183,6 @@ Tokens are generated from the Admin Panel under Profiles -> Manage Tokens.
 | `body_html`   | string  | No* | The HTML content of the email.          |
 | `body_text`   | string  | No* | The plain-text version of the email.    |
 | `cc_email`    | string  | No       | A CC recipient's email address.         |
-| `bcc_email`   | string  | No       | A BCC recipient's email address.        |
-
-
 
 *At least one of body_html or body_text must be provided.
 
@@ -191,7 +190,7 @@ cURL Example:
 
 ```
 curl -X POST https://yourdomain.com/api/v1/send.php \
--H "Authorization: Bearer st-your-generated-api-token" \
+-H "Authorization: Bearer your-prefix.your-secret-token" \
 -H "Content-Type: application/json" \
 -d '{
     "profile_id": 1,

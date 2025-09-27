@@ -41,9 +41,15 @@ if (!isset($_SERVER['HTTP_AUTHORIZATION'])) {
 }
 
 $auth_header = $_SERVER['HTTP_AUTHORIZATION'];
-if (sscanf($auth_header, 'Bearer %s', $token) !== 1) {
+if (strpos($auth_header, 'Bearer ') !== 0) {
     send_json_error(401, 'Invalid Authorization header format. Expected: Bearer <token>');
 }
+$token = substr($auth_header, 7);
+
+if (strpos($token, '.') === false) {
+    send_json_error(401, 'Invalid token format. Expected: <prefix>.<secret>');
+}
+list($prefix, $secret) = explode('.', $token, 2);
 
 // --- 3. Input Parsing & Validation ---
 $json_data = json_decode(file_get_contents('php://input'), true);
@@ -58,7 +64,10 @@ $subject = trim($json_data['subject'] ?? '');
 $body_html = trim($json_data['body_html'] ?? '');
 $body_text = trim($json_data['body_text'] ?? '');
 $cc_email = filter_var($json_data['cc_email'] ?? null, FILTER_VALIDATE_EMAIL);
-$bcc_email = filter_var($json_data['bcc_email'] ?? null, FILTER_VALIDATE_EMAIL);
+
+if (isset($json_data['cc_email']) && !$cc_email) {
+    send_json_error(400, 'A valid `cc_email` must be provided if the key exists.');
+}
 
 if (!$profile_id) {
     send_json_error(400, '`profile_id` is required and must be an integer.');
@@ -75,50 +84,41 @@ if (empty($body_html) && empty($body_text)) {
 
 
 // --- 4. Token and Profile Verification ---
-$stmt = $pdo->prepare("SELECT token_hash FROM api_tokens WHERE profile_id = ?");
-$stmt->execute([$profile_id]);
-$token_hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+// Fetches the profile's rate limit settings and the token hash in one query.
+// This is more efficient than multiple queries.
+$stmt = $pdo->prepare(
+    "SELECT p.rate_limit_count, p.rate_limit_interval, t.token_hash
+     FROM sending_profiles p
+     JOIN api_tokens t ON p.id = t.profile_id
+     WHERE p.id = ? AND t.token_prefix = ?"
+);
+$stmt->execute([$profile_id, $prefix]);
+$profile_data = $stmt->fetch(PDO::FETCH_ASSOC);
 
-$is_authorized = false;
-if ($token_hashes) {
-    foreach ($token_hashes as $hash) {
-        if (password_verify($token, $hash)) {
-            $is_authorized = true;
-            break;
-        }
-    }
-}
-
-if (!$is_authorized) {
+// Verify that the profile exists and the token is valid.
+if (!$profile_data || !password_verify($secret, $profile_data['token_hash'])) {
     send_json_error(403, 'Forbidden. The provided token is not valid for the specified profile_id.');
 }
 
 $client_ip = get_client_ip();
 
 // --- 5. Rate Limiting ---
-$settings_stmt = $pdo->query("SELECT rate_limit_count, rate_limit_minutes FROM settings WHERE id = 1");
-$settings = $settings_stmt->fetch(PDO::FETCH_ASSOC);
-
-$rate_limit_count = $settings['rate_limit_count'] ?? 200;
-$rate_limit_minutes = $settings['rate_limit_minutes'] ?? 60;
-
-// Note: A 'reject' mode is implemented here, as per the blueprint.
-if ($rate_limit_count > 0) {
+if ($profile_data['rate_limit_count'] > 0) {
     // First, check if this IP is already on a temporary block.
     $check_stmt = $pdo->prepare("SELECT id FROM rate_limit_tracker WHERE ip_address = ? AND profile_id = ? AND blocked_until > NOW()");
     $check_stmt->execute([$client_ip, $profile_id]);
-    if($check_stmt->fetch()) {
+    if ($check_stmt->fetch()) {
         send_json_error(429, 'Too Many Requests. This IP is temporarily blocked due to exceeding rate limits.');
     }
 
     // If not blocked, check the number of recent submissions.
     $stmt = $pdo->prepare(
-        "SELECT COUNT(*) FROM email_queue WHERE profile_id = ? AND request_ip = ? AND created_at >= NOW() - INTERVAL ? MINUTE"
+        "SELECT COUNT(*) FROM email_queue WHERE profile_id = ? AND ip_address = ? AND submitted_at >= NOW() - INTERVAL ? MINUTE"
     );
-    $stmt->execute([$profile_id, $client_ip, $rate_limit_minutes]);
+    $stmt->execute([$profile_id, $client_ip, $profile_data['rate_limit_interval']]);
     $queued_count = $stmt->fetchColumn();
 
-    if ($queued_count >= $rate_limit_count) {
+    if ($queued_count >= $profile_data['rate_limit_count']) {
         // Log the rate limit violation and block the IP
         $block_duration_minutes = 5; // Block for 5 minutes by default
         $insert_stmt = $pdo->prepare(
@@ -131,22 +131,21 @@ if ($rate_limit_count > 0) {
 }
 
 // --- 6. Queue the Email ---
-$message_id = bin2hex(random_bytes(16)); // Generate a unique ID for tracking
+$message_id = bin2hex(random_bytes(18)); // Generate a 36-char UUID
 
 try {
     $stmt = $pdo->prepare(
-        "INSERT INTO email_queue (profile_id, message_id, to_email, cc_email, bcc_email, subject, body_html, body_text, request_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $stmt->execute([
-        $profile_id,
         $message_id,
+        $profile_id,
+        $client_ip,
         $to_email,
         $cc_email ?: null,
-        $bcc_email ?: null,
         $subject,
         $body_html ?: null,
-        $body_text ?: null,
-        $client_ip
+        $body_text ?: null
     ]);
 
     http_response_code(202);
@@ -154,6 +153,7 @@ try {
 
 } catch (PDOException $e) {
     // In a real app, log this error to a file
+    error_log($e->getMessage());
     send_json_error(500, 'Internal Server Error. Could not queue the email.');
 }
 ?>

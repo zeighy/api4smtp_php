@@ -32,8 +32,8 @@ $current_page = basename($_SERVER['SCRIPT_NAME']);
                         </a>
                     </li>
                     <li class="mr-3 flex-1">
-                        <a href="email_history.php" class="block py-1 md:py-3 pl-1 align-middle no-underline hover:text-white border-b-2 <?= $current_page == 'email_history.php' ? 'text-blue-400 border-blue-400' : 'border-gray-800 hover:border-blue-400 text-gray-400' ?>">
-                            <i class="fas fa-history fa-fw mr-3 <?= $current_page == 'email_history.php' ? 'text-blue-400' : '' ?>"></i><span class="pb-1 md:pb-0 text-sm">History</span>
+                        <a href="email_logs.php" class="block py-1 md:py-3 pl-1 align-middle no-underline hover:text-white border-b-2 <?= $current_page == 'email_logs.php' ? 'text-blue-400 border-blue-400' : 'border-gray-800 hover:border-blue-400 text-gray-400' ?>">
+                            <i class="fas fa-history fa-fw mr-3 <?= $current_page == 'email_logs.php' ? 'text-blue-400' : '' ?>"></i><span class="pb-1 md:pb-0 text-sm">Email Logs</span>
                         </a>
                     </li>
                     <li class="mr-3 flex-1">

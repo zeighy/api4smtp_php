@@ -23,16 +23,23 @@ $new_token = null;
 
 // Handle new token creation
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_token'])) {
-    $token = 'st-' . bin2hex(random_bytes(32)); // "st" for "smtp-token"
-    $token_hash = password_hash($token, PASSWORD_DEFAULT);
+    $prefix = 'st_' . bin2hex(random_bytes(3)); // "st_" (3 chars) + 6 hex chars = 9 total
+    $secret = bin2hex(random_bytes(24)); // 48 random hex chars
+    $full_token = $prefix . '.' . $secret;
+    $secret_hash = password_hash($secret, PASSWORD_DEFAULT);
 
     try {
-        $stmt = $pdo->prepare("INSERT INTO api_tokens (profile_id, token_hash) VALUES (?, ?)");
-        $stmt->execute([$profile_id, $token_hash]);
+        $stmt = $pdo->prepare("INSERT INTO api_tokens (profile_id, token_prefix, token_hash) VALUES (?, ?, ?)");
+        $stmt->execute([$profile_id, $prefix, $secret_hash]);
         $feedback = ['type' => 'success', 'message' => 'New token created successfully. Please copy it now, you will not see it again.'];
-        $new_token = $token;
+        $new_token = $full_token;
     } catch (PDOException $e) {
-        $feedback = ['type' => 'error', 'message' => 'Error creating token: ' . $e->getMessage()];
+        // Handle potential duplicate prefix error
+        if ($e->errorInfo[1] == 1062) {
+             $feedback = ['type' => 'error', 'message' => 'Error: A token with the same prefix was generated. Please try again.'];
+        } else {
+            $feedback = ['type' => 'error', 'message' => 'Error creating token: ' . $e->getMessage()];
+        }
     }
 }
 
@@ -52,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_token'])) {
 
 
 // Fetch existing tokens for this profile
-$tokens_stmt = $pdo->prepare("SELECT id, token_hash, created_at FROM api_tokens WHERE profile_id = ? ORDER BY created_at DESC");
+$tokens_stmt = $pdo->prepare("SELECT id, token_prefix, created_at, last_used_at FROM api_tokens WHERE profile_id = ? ORDER BY created_at DESC");
 $tokens_stmt->execute([$profile_id]);
 $tokens = $tokens_stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -94,23 +101,25 @@ require_once __DIR__ . '/includes/header.php';
         <table class="min-w-full leading-normal">
             <thead>
                 <tr>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Token (Hashed)</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Token Prefix</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Created At</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Last Used</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($tokens)): ?>
                     <tr>
-                        <td colspan="3" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">No tokens found for this profile.</td>
+                        <td colspan="4" class="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center">No tokens found for this profile.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($tokens as $token): ?>
                         <tr class="hover:bg-gray-50">
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
-                                <span class="font-mono text-gray-700" title="<?= htmlspecialchars($token['token_hash']) ?>">...<?= htmlspecialchars(substr($token['token_hash'], -12)) ?></span>
+                                <span class="font-mono text-gray-700"><?= htmlspecialchars($token['token_prefix']) ?></span>
                             </td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($token['created_at']) ?></td>
+                            <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($token['last_used_at'] ?? 'Never') ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
                                 <form action="" method="POST" onsubmit="return confirm('Are you sure you want to delete this token? This action cannot be undone.');">
                                     <input type="hidden" name="token_id" value="<?= $token['id'] ?>">

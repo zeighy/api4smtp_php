@@ -2,24 +2,6 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/includes/auth_check.php';
 
-// Helper function for password encryption
-function encrypt_password($password, $key) {
-    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
-    $encrypted = openssl_encrypt($password, 'aes-256-cbc', $key, 0, $iv);
-    // Combine IV with encrypted data so we can decrypt it later
-    return base64_encode($encrypted . '::' . $iv);
-}
-
-// Helper function for password decryption
-function decrypt_password($encrypted_data, $key) {
-    list($encrypted_password, $iv) = array_pad(explode('::', base64_decode($encrypted_data), 2), 2, null);
-    if (is_null($iv)) {
-        // Handle old data that might not have an IV or is not correctly formatted
-        return ''; 
-    }
-    return openssl_decrypt($encrypted_password, 'aes-256-cbc', $key, 0, $iv);
-}
-
 $action = $_POST['action'] ?? $_GET['action'] ?? 'view';
 $profile_id = $_GET['id'] ?? $_POST['id'] ?? null;
 $error_message = '';
@@ -42,8 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // --- Add new profile ---
     if ($action === 'add') {
         if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user && $smtp_pass) {
-            $encrypted_pass = encrypt_password($smtp_pass, ENCRYPTION_KEY);
-            $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass_encrypted, smtp_encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $encrypted_pass = simple_encrypt($smtp_pass);
+            $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_encryption) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             if ($stmt->execute([$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption])) {
                 $success_message = 'Profile created successfully!';
             } else {
@@ -59,8 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user) {
             if (!empty($smtp_pass)) {
                 // If a new password is provided, encrypt it and update
-                $encrypted_pass = encrypt_password($smtp_pass, ENCRYPTION_KEY);
-                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass_encrypted=?, smtp_encryption=? WHERE id=?");
+                $encrypted_pass = simple_encrypt($smtp_pass);
+                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_encryption=? WHERE id=?");
                 $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption, $profile_id];
             } else {
                 // If password is blank, don't update it

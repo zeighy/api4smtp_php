@@ -24,7 +24,12 @@ try {
     $pdo->beginTransaction();
 
     // Fetch a batch of emails from the queue
-    $stmt = $pdo->prepare("SELECT * FROM email_queue ORDER BY created_at ASC LIMIT " . QUEUE_BATCH_SIZE);
+    $stmt = $pdo->prepare(
+        "SELECT id, profile_id, ip_address, submitted_at, recipient_email, cc_email, subject, body_html, body_text
+         FROM email_queue
+         ORDER BY submitted_at ASC
+         LIMIT " . QUEUE_BATCH_SIZE
+    );
     $stmt->execute();
     $emails_to_process = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -38,34 +43,36 @@ try {
 
     // Prepare statements for reuse
     $profile_stmt = $pdo->prepare("SELECT * FROM sending_profiles WHERE id = ?");
-    $history_stmt = $pdo->prepare(
-        "INSERT INTO email_history (profile_id, message_id, status, to_email, cc_email, bcc_email, subject, error_message, request_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    $log_stmt = $pdo->prepare(
+        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, subject, status, status_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $delete_stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ?");
 
     foreach ($emails_to_process as $email) {
-        echo "Processing Message ID: {$email['message_id']}...\n";
+        echo "Processing Message ID: {$email['id']}...\n";
 
         // 1. Fetch the sending profile for this email
         $profile_stmt->execute([$email['profile_id']]);
         $profile = $profile_stmt->fetch(PDO::FETCH_ASSOC);
 
         $status = 'failed';
-        $error_message = '';
+        $status_info = '';
 
         if (!$profile) {
-            $error_message = 'Sending profile (ID: ' . $email['profile_id'] . ') not found. It may have been deleted.';
-            echo " - FAILED: {$error_message}\n";
+            $status_info = 'Sending profile (ID: ' . $email['profile_id'] . ') not found. It may have been deleted.';
+            echo " - FAILED: {$status_info}\n";
         } else {
             // 2. Decrypt the SMTP password
-            try {
-                $smtp_password = decrypt($profile['smtp_password'], ENCRYPTION_KEY);
-            } catch (Exception $e) {
-                $error_message = 'Failed to decrypt SMTP password. Check encryption key.';
-                echo " - FAILED: {$error_message}\n";
+            // Note: The simple_decrypt function is defined in config.php.example
+            // and must be present in your config.php file.
+            $smtp_password = simple_decrypt($profile['smtp_pass']);
+            if ($smtp_password === false) {
+                $status_info = 'Failed to decrypt SMTP password. Check encryption key.';
+                echo " - FAILED: {$status_info}\n";
                 // Skip sending if decryption fails
                 goto log_and_delete;
             }
+
 
             // 3. Configure and send with PHPMailer
             $mail = new PHPMailer(true);
@@ -76,49 +83,47 @@ try {
                 $mail->SMTPAuth   = true;
                 $mail->Username   = $profile['smtp_user'];
                 $mail->Password   = $smtp_password;
-                $mail->SMTPSecure = $profile['smtp_encryption'] === 'none' ? '' : $profile['smtp_encryption'];
+                $mail->SMTPSecure = $profile['smtp_encryption'] === 'none' ? false : $profile['smtp_encryption'];
                 $mail->Port       = $profile['smtp_port'];
 
                 // Recipients
                 $mail->setFrom($profile['from_email'], $profile['from_name']);
-                $mail->addAddress($email['to_email']);
+                $mail->addAddress($email['recipient_email']);
                 if (!empty($email['cc_email'])) {
                     $mail->addCC($email['cc_email']);
                 }
-                if (!empty($email['bcc_email'])) {
-                    $mail->addBCC($email['bcc_email']);
-                }
 
                 // Content
-                $mail->isHTML(true);
+                $mail->isHTML(!empty($email['body_html']));
                 $mail->Subject = $email['subject'];
                 $mail->Body    = $email['body_html'];
                 $mail->AltBody = $email['body_text'];
 
                 $mail->send();
                 $status = 'sent';
-                $error_message = null;
-                echo " - SUCCESS: Email sent to {$email['to_email']}.\n";
+                $status_info = null;
+                echo " - SUCCESS: Email sent to {$email['recipient_email']}.\n";
 
             } catch (Exception $e) {
                 $status = 'failed';
-                $error_message = $mail->ErrorInfo;
-                echo " - FAILED: {$error_message}\n";
+                $status_info = $mail->ErrorInfo;
+                echo " - FAILED: {$status_info}\n";
             }
         }
 
         // 4. Log to history and delete from queue
         log_and_delete:
-        $history_stmt->execute([
+        $log_stmt->execute([
+            $email['id'],
             $email['profile_id'],
-            $email['message_id'],
-            $status,
-            $email['to_email'],
+            $email['ip_address'],
+            $email['submitted_at'],
+            $status === 'sent' ? date('Y-m-d H:i:s') : null,
+            $email['recipient_email'],
             $email['cc_email'],
-            $email['bcc_email'],
             $email['subject'],
-            $error_message,
-            $email['request_ip']
+            $status,
+            $status_info
         ]);
 
         $delete_stmt->execute([$email['id']]);

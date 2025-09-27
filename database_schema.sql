@@ -38,7 +38,8 @@ CREATE TABLE `sending_profiles` (
 CREATE TABLE `api_tokens` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `profile_id` INT NOT NULL,
-  `token` VARCHAR(128) NOT NULL UNIQUE,
+  `token_hash` VARCHAR(255) NOT NULL,
+  `token_prefix` VARCHAR(10) NOT NULL UNIQUE,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` TIMESTAMP NULL,
   FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
@@ -52,6 +53,7 @@ CREATE TABLE `email_queue` (
   `submitted_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `send_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `recipient_email` VARCHAR(255) NOT NULL,
+  `cc_email` VARCHAR(255) NULL,
   `subject` VARCHAR(255) NOT NULL,
   `body_html` TEXT,
   `body_text` TEXT,
@@ -68,6 +70,7 @@ CREATE TABLE `email_logs` (
   `submitted_at` TIMESTAMP NOT NULL,
   `sent_at` TIMESTAMP NULL,
   `recipient_email` VARCHAR(255) NOT NULL,
+  `cc_email` VARCHAR(255) NULL,
   `subject` VARCHAR(255) NOT NULL,
   `status` ENUM('sent', 'failed', 'bounced') NOT NULL,
   `status_info` TEXT,
@@ -78,16 +81,6 @@ CREATE TABLE `email_logs` (
 CREATE INDEX `idx_sent_at` ON `email_logs`(`sent_at`);
 
 -- Table to track API requests for rate limiting.
-CREATE TABLE `rate_limit_tracker` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `profile_id` INT NOT NULL,
-  `ip_address` VARCHAR(45) NOT NULL,
-  `request_count` INT NOT NULL,
-  `first_request_at` TIMESTAMP NOT NULL,
-  UNIQUE KEY `profile_ip` (`profile_id`, `ip_address`),
-  FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- This table will store IPs that have been temporarily blocked by the rate limiter.
 CREATE TABLE `rate_limit_tracker` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
