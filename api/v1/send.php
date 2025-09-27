@@ -95,7 +95,7 @@ if (empty($body_html) && empty($body_text)) {
 // Fetches the profile's rate limit settings and the token hash in one query.
 // This is more efficient than multiple queries.
 $stmt = $pdo->prepare(
-    "SELECT p.rate_limit_count, p.rate_limit_interval, t.token_hash
+    "SELECT p.rate_limit_count, p.rate_limit_interval, p.rate_limit_strategy, t.token_hash
      FROM sending_profiles p
      JOIN api_tokens t ON p.id = t.profile_id
      WHERE p.id = ? AND t.token_prefix = ?"
@@ -109,17 +109,11 @@ if (!$profile_data || !password_verify($secret, $profile_data['token_hash'])) {
 }
 
 $client_ip = get_client_ip();
+$send_at_time = null; // Default to NOW()
 
 // --- 5. Rate Limiting ---
 if ($profile_data['rate_limit_count'] > 0) {
-    // First, check if this IP is already on a temporary block.
-    $check_stmt = $pdo->prepare("SELECT id FROM rate_limit_tracker WHERE ip_address = ? AND profile_id = ? AND blocked_until > NOW()");
-    $check_stmt->execute([$client_ip, $profile_id]);
-    if ($check_stmt->fetch()) {
-        send_json_error(429, 'Too Many Requests. This IP is temporarily blocked due to exceeding rate limits.');
-    }
-
-    // If not blocked, check the number of recent submissions.
+    // Check for recent submissions from this IP.
     $stmt = $pdo->prepare(
         "SELECT COUNT(*) FROM email_queue WHERE profile_id = ? AND ip_address = ? AND submitted_at >= NOW() - INTERVAL ? MINUTE"
     );
@@ -127,14 +121,38 @@ if ($profile_data['rate_limit_count'] > 0) {
     $queued_count = $stmt->fetchColumn();
 
     if ($queued_count >= $profile_data['rate_limit_count']) {
-        // Log the rate limit violation and block the IP
-        $block_duration_minutes = 5; // Block for 5 minutes by default
-        $insert_stmt = $pdo->prepare(
-            "INSERT INTO rate_limit_tracker (ip_address, profile_id, blocked_until) VALUES (?, ?, NOW() + INTERVAL ? MINUTE)"
-        );
-        $insert_stmt->execute([$client_ip, $profile_id, $block_duration_minutes]);
+        // Rate limit is exceeded. Apply the profile's strategy.
+        if ($profile_data['rate_limit_strategy'] === 'REJECT') {
+            // For REJECT, we use the rate_limit_tracker to temporarily block the IP and return an error.
+            $check_stmt = $pdo->prepare("SELECT id FROM rate_limit_tracker WHERE ip_address = ? AND profile_id = ? AND blocked_until > NOW()");
+            $check_stmt->execute([$client_ip, $profile_id]);
+            if ($check_stmt->fetch()) {
+                send_json_error(429, 'Too Many Requests. This IP is temporarily blocked due to exceeding rate limits.');
+            }
 
-        send_json_error(429, 'Too Many Requests. Rate limit exceeded for this IP on this profile. Please try again later.');
+            $block_duration_minutes = 5; // Block for 5 minutes by default.
+            $insert_stmt = $pdo->prepare(
+                "INSERT INTO rate_limit_tracker (ip_address, profile_id, blocked_until) VALUES (?, ?, NOW() + INTERVAL ? MINUTE)"
+            );
+            $insert_stmt->execute([$client_ip, $profile_id, $block_duration_minutes]);
+            send_json_error(429, 'Too Many Requests. Rate limit exceeded for this IP on this profile. Please try again later.');
+
+        } elseif ($profile_data['rate_limit_strategy'] === 'DELAY') {
+            // For DELAY, we calculate a future send_at time.
+            $oldest_email_stmt = $pdo->prepare(
+                "SELECT submitted_at FROM email_queue
+                 WHERE profile_id = ? AND ip_address = ? AND submitted_at >= NOW() - INTERVAL ? MINUTE
+                 ORDER BY submitted_at ASC LIMIT 1"
+            );
+            $oldest_email_stmt->execute([$profile_id, $client_ip, $profile_data['rate_limit_interval']]);
+            $oldest_email_time_str = $oldest_email_stmt->fetchColumn();
+
+            if ($oldest_email_time_str) {
+                $release_time = new DateTime($oldest_email_time_str);
+                $release_time->add(new DateInterval('PT' . $profile_data['rate_limit_interval'] . 'M'));
+                $send_at_time = $release_time->format('Y-m-d H:i:s');
+            }
+        }
     }
 }
 
@@ -143,7 +161,7 @@ $message_id = bin2hex(random_bytes(18)); // Generate a 36-char UUID
 
 try {
     $stmt = $pdo->prepare(
-        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text, send_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $stmt->execute([
         $message_id,
@@ -153,11 +171,12 @@ try {
         $cc_email ?: null,
         $subject,
         $body_html ?: null,
-        $body_text ?: null
+        $body_text ?: null,
+        $send_at_time // If null, DB uses DEFAULT CURRENT_TIMESTAMP
     ]);
 
     http_response_code(202);
-    echo json_encode(['status' => 'queued', 'message_id' => $message_id]);
+    echo json_encode(['status' => 'queued', 'message_id' => $message_id, 'send_at' => $send_at_time ?? 'now']);
 
 } catch (PDOException $e) {
     // In a real app, log this error to a file

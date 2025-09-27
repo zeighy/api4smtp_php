@@ -23,11 +23,12 @@ try {
     // Begin transaction for data consistency
     $pdo->beginTransaction();
 
-    // Fetch a batch of emails from the queue
+    // Fetch a batch of emails from the queue that are ready to be sent
     $stmt = $pdo->prepare(
         "SELECT id, profile_id, ip_address, submitted_at, recipient_email, cc_email, subject, body_html, body_text
          FROM email_queue
-         ORDER BY submitted_at ASC
+         WHERE send_at <= NOW()
+         ORDER BY send_at ASC
          LIMIT " . QUEUE_BATCH_SIZE
     );
     $stmt->execute();
