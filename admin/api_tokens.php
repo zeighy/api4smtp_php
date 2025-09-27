@@ -23,7 +23,7 @@ $new_token = null;
 
 // Handle new token creation
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_token'])) {
-    $prefix = 'st_' . bin2hex(random_bytes(4)); // "st" for "smtp-token", plus 8 random hex chars
+    $prefix = 'st_' . bin2hex(random_bytes(3)); // "st_" (3 chars) + 6 hex chars = 9 total
     $secret = bin2hex(random_bytes(24)); // 48 random hex chars
     $full_token = $prefix . '.' . $secret;
     $secret_hash = password_hash($secret, PASSWORD_DEFAULT);
