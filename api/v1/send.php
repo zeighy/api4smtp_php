@@ -9,13 +9,21 @@ require_once __DIR__ . '/../../config.php';
  * @return string The client's IP address.
  */
 function get_client_ip() {
+    // Check for Cloudflare's header first.
+    if (isset($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        return $_SERVER['HTTP_CF_CONNECTING_IP'];
+    }
+    // Fallback to other common proxy headers.
     if (isset($_SERVER['HTTP_X_REAL_IP'])) {
         return $_SERVER['HTTP_X_REAL_IP'];
-    } elseif (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        // HTTP_X_FORWARDED_FOR can contain a comma-separated list of IPs. The client's IP is usually the first one.
+    }
+    if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        // HTTP_X_FORWARDED_FOR can contain a comma-separated list of IPs.
+        // The client's IP is usually the first one.
         $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
         return trim($ips[0]);
     }
+    // Finally, use the standard remote address.
     return $_SERVER['REMOTE_ADDR'];
 }
 

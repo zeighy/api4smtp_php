@@ -44,7 +44,7 @@ try {
     // Prepare statements for reuse
     $profile_stmt = $pdo->prepare("SELECT * FROM sending_profiles WHERE id = ?");
     $log_stmt = $pdo->prepare(
-        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, subject, status, status_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, subject, status, status_info, debug_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $delete_stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ?");
 
@@ -57,14 +57,13 @@ try {
 
         $status = 'failed';
         $status_info = '';
+        $debug_info = '';
 
         if (!$profile) {
             $status_info = 'Sending profile (ID: ' . $email['profile_id'] . ') not found. It may have been deleted.';
             echo " - FAILED: {$status_info}\n";
         } else {
             // 2. Decrypt the SMTP password
-            // Note: The simple_decrypt function is defined in config.php.example
-            // and must be present in your config.php file.
             $smtp_password = simple_decrypt($profile['smtp_pass']);
             if ($smtp_password === false) {
                 $status_info = 'Failed to decrypt SMTP password. Check encryption key.';
@@ -73,12 +72,15 @@ try {
                 goto log_and_delete;
             }
 
-
             // 3. Configure and send with PHPMailer
             $mail = new PHPMailer(true);
             try {
-                // Server settings
+                // Server settings with debugging
                 $mail->isSMTP();
+                $mail->SMTPDebug = 2; // Enable verbose debug output
+                $mail->Debugoutput = function($str, $level) use (&$debug_info) {
+                    $debug_info .= $str . "\n";
+                };
                 $mail->Host       = $profile['smtp_host'];
                 $mail->SMTPAuth   = true;
                 $mail->Username   = $profile['smtp_user'];
@@ -101,12 +103,12 @@ try {
 
                 $mail->send();
                 $status = 'sent';
-                $status_info = null;
+                $status_info = 'OK';
                 echo " - SUCCESS: Email sent to {$email['recipient_email']}.\n";
 
             } catch (Exception $e) {
                 $status = 'failed';
-                $status_info = $mail->ErrorInfo;
+                $status_info = $mail->ErrorInfo; // This contains the primary error message
                 echo " - FAILED: {$status_info}\n";
             }
         }
@@ -123,7 +125,8 @@ try {
             $email['cc_email'],
             $email['subject'],
             $status,
-            $status_info
+            $status_info,
+            $debug_info // Add the captured debug info to the log
         ]);
 
         $delete_stmt->execute([$email['id']]);

@@ -74,6 +74,7 @@ CREATE TABLE `email_logs` (
   `subject` VARCHAR(255) NOT NULL,
   `status` ENUM('sent', 'failed', 'bounced') NOT NULL,
   `status_info` TEXT,
+  `debug_info` TEXT,
   FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

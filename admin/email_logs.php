@@ -109,7 +109,7 @@ require_once __DIR__ . '/includes/header.php';
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">IP Address</th>
                     <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
-                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Info</th>
+                    <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Details</th>
                 </tr>
             </thead>
             <tbody>
@@ -139,9 +139,10 @@ require_once __DIR__ . '/includes/header.php';
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= htmlspecialchars($row['ip_address']) ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= date('Y-m-d H:i', strtotime($row['sent_at'] ?? $row['submitted_at'])) ?></td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
-                                <?php if ($row['status'] == 'failed'): ?>
-                                    <button onclick="showError(this)" data-error="<?= htmlspecialchars($row['status_info']) ?>" class="text-blue-500 hover:underline">View</button>
-                                <?php endif; ?>
+                                <button onclick="showDetails(this)"
+                                        data-status-info="<?= htmlspecialchars($row['status_info'] ?? 'N/A') ?>"
+                                        data-debug-info="<?= htmlspecialchars($row['debug_info'] ?? 'No debug information recorded.') ?>"
+                                        class="text-blue-500 hover:underline">View</button>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -172,16 +173,23 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
-<!-- Error Modal -->
-<div id="error-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
-    <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-1/2 shadow-lg rounded-md bg-white">
-        <div class="mt-3 text-center">
-            <h3 class="text-lg leading-6 font-medium text-gray-900">SMTP Error Details</h3>
-            <div class="mt-2 px-7 py-3">
-                <p id="error-text" class="text-sm text-gray-500 bg-gray-100 p-4 rounded-md break-words"></p>
+<!-- Details Modal -->
+<div id="details-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
+    <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-2/3 shadow-lg rounded-md bg-white">
+        <div class="mt-3">
+            <h3 class="text-lg leading-6 font-medium text-gray-900 text-center mb-4">Log Details</h3>
+            <div class="grid grid-cols-1 gap-y-4">
+                <div>
+                    <h4 class="text-md font-semibold text-gray-800">Status Info</h4>
+                    <p id="status-info-text" class="text-sm text-gray-700 bg-gray-100 p-3 rounded-md break-words mt-1"></p>
+                </div>
+                <div>
+                    <h4 class="text-md font-semibold text-gray-800">SMTP Debug Log</h4>
+                    <pre id="debug-info-text" class="text-xs text-gray-600 bg-gray-900 text-white p-4 rounded-md break-words whitespace-pre-wrap overflow-x-auto max-h-80 mt-1"></pre>
+                </div>
             </div>
-            <div class="items-center px-4 py-3">
-                <button id="close-modal" class="px-4 py-2 bg-gray-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-300">
+            <div class="items-center px-4 py-3 mt-4 text-right">
+                <button id="close-modal" class="px-4 py-2 bg-gray-500 text-white text-base font-medium rounded-md shadow-sm hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-300">
                     Close
                 </button>
             </div>
@@ -190,15 +198,20 @@ require_once __DIR__ . '/includes/header.php';
 </div>
 
 <script>
-function showError(button) {
-    const error = button.getAttribute('data-error');
-    document.getElementById('error-text').innerText = error;
-    document.getElementById('error-modal').classList.remove('hidden');
+function showDetails(button) {
+    const statusInfo = button.getAttribute('data-status-info');
+    const debugInfo = button.getAttribute('data-debug-info');
+
+    document.getElementById('status-info-text').innerText = statusInfo;
+    document.getElementById('debug-info-text').innerText = debugInfo;
+
+    document.getElementById('details-modal').classList.remove('hidden');
 }
 
 document.getElementById('close-modal').addEventListener('click', function() {
-    document.getElementById('error-modal').classList.add('hidden');
+    document.getElementById('details-modal').classList.add('hidden');
 });
+
 
 function downloadCSV(csv, filename) {
     let csvFile;
