@@ -24,11 +24,17 @@ This application serves as a centralized email-sending service. Instead of embed
 
   - Detailed email history with filtering and search.
 
+  - **Queue Management**: View and cancel emails that are currently in the sending queue.
+
+  - **Advanced Logging**: View detailed SMTP debug logs for every email to diagnose delivery issues.
+
   - IP-based rate limiting monitoring and management.
 
 - Background Processing: Emails are sent by a background script (cron job), making API responses fast and resilient to SMTP server delays.
 
-- Rate Limiting: Protect your service from abuse with configurable, IP-based rate limiting on the API.
+- **Advanced Rate Limiting**: Protect your service from abuse with configurable, IP-based rate limiting on the API. Supports two strategies per profile:
+  - **Reject**: Instantly reject requests that exceed the limit.
+  - **Delay**: Queue the emails to be sent later, staggering them to stay within the rate limit.
 
 - Secure Credential Storage: SMTP passwords are encrypted in the database.
 
@@ -206,9 +212,11 @@ Success Response (202 Accepted):
 ```
 {
     "status": "queued",
-    "message_id": "a1b2c3d4e5f67890a1b2c3d4e5f67890"
+    "message_id": "a1b2c3d4e5f67890a1b2c3d4e5f67890",
+    "send_at": "2023-10-27 14:35:00"
 }
 ```
+The `send_at` field will show the scheduled sending time if the email was delayed by the rate limiter. If it's scheduled for immediate delivery, it will show the current timestamp.
 
 Error Response (e.g., 403 Forbidden):
 

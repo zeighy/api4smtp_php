@@ -66,6 +66,43 @@ require_once __DIR__ . '/includes/header.php';
             </div>
         </section>
 
+        <!-- Advanced Features -->
+        <section>
+            <h2 class="text-2xl font-semibold text-gray-700 border-b-2 pb-2 mb-4">Advanced Features</h2>
+            <div class="space-y-6">
+                <div>
+                    <h3 class="text-xl font-semibold text-gray-700 mb-2">Rate Limiting Strategies</h3>
+                    <p class="text-gray-600">
+                        When creating or editing a Sending Profile, you can now choose a Rate Limit Strategy:
+                    </p>
+                    <ul class="list-disc list-inside text-gray-600 space-y-1 mt-2">
+                        <li><strong class="font-semibold text-gray-800">Reject:</strong> (Default) If the number of requests from an IP exceeds the limit, the API will return a "429 Too Many Requests" error and will not queue the email.</li>
+                        <li><strong class="font-semibold text-gray-800">Delay:</strong> If the rate limit is exceeded, the API will still accept the email but will schedule it to be sent at a later time. This staggers the emails to ensure they are sent without violating the rate limit. The API response will include a `send_at` field showing the scheduled time.</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="text-xl font-semibold text-gray-700 mb-2">Viewing the Email Queue</h3>
+                    <p class="text-gray-600">
+                        The <a href="email_logs.php" class="text-blue-500 hover:underline">Email History</a> page now allows you to see emails that are currently waiting to be sent.
+                    </p>
+                     <ul class="list-disc list-inside text-gray-600 space-y-1 mt-2">
+                        <li>Use the "View" dropdown at the top of the page and select "Queue".</li>
+                        <li>The table will show all emails that are scheduled for future delivery.</li>
+                        <li>You can cancel any email in the queue by clicking the "Cancel" button. This is permanent and cannot be undone.</li>
+                    </ul>
+                </div>
+                 <div>
+                    <h3 class="text-xl font-semibold text-gray-700 mb-2">Diagnosing Email Issues</h3>
+                    <p class="text-gray-600">
+                        To help diagnose why an email failed or to get more details about its delivery, the Email History page now provides full SMTP debug logs.
+                    </p>
+                    <p class="text-gray-600 mt-2">
+                        In the "History" view, click the "View" button next to any log entry. The modal window will show the basic status information and a complete, verbose log of the conversation between this application and the SMTP server for that specific email.
+                    </p>
+                </div>
+            </div>
+        </section>
+
         <!-- Cron Job Setup -->
         <section>
             <h2 class="text-2xl font-semibold text-gray-700 border-b-2 pb-2 mb-4">Cron Job Setup</h2>
