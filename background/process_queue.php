@@ -92,15 +92,37 @@ try {
 
                 // Recipients
                 $mail->setFrom($profile['from_email'], $profile['from_name']);
-                $mail->addAddress($email['recipient_email']);
+
+                // Add To, CC, and BCC recipients
+                // Handle both V1 (string) and V2 (JSON array) formats
+                $recipients = json_decode($email['recipient_email'], true);
+                if (is_array($recipients)) {
+                    foreach ($recipients as $recipient) {
+                        $mail->addAddress($recipient);
+                    }
+                } else {
+                    $mail->addAddress($email['recipient_email']);
+                }
+
                 if (!empty($email['cc_email'])) {
-                    $mail->addCC($email['cc_email']);
+                    $cc_emails = json_decode($email['cc_email'], true);
+                    if (is_array($cc_emails)) {
+                        foreach ($cc_emails as $cc) {
+                            $mail->addCC($cc);
+                        }
+                    } else {
+                        $mail->addCC($email['cc_email']);
+                    }
                 }
 
                 if (!empty($email['bcc_email'])) {
                     $bcc_emails = json_decode($email['bcc_email'], true);
-                    foreach ($bcc_emails as $bcc) {
-                        $mail->addBCC($bcc);
+                    if (is_array($bcc_emails)) {
+                        foreach ($bcc_emails as $bcc) {
+                            $mail->addBCC($bcc);
+                        }
+                    } else {
+                        $mail->addBCC($email['bcc_email']);
                     }
                 }
 
