@@ -25,7 +25,7 @@ try {
 
     // Fetch a batch of emails from the queue that are ready to be sent
     $stmt = $pdo->prepare(
-        "SELECT id, profile_id, ip_address, submitted_at, recipient_email, cc_email, subject, body_html, body_text
+        "SELECT id, profile_id, ip_address, submitted_at, recipient_email, cc_email, bcc_email, subject, body_html, body_text
          FROM email_queue
          WHERE send_at <= NOW()
          ORDER BY send_at ASC
@@ -44,8 +44,9 @@ try {
 
     // Prepare statements for reuse
     $profile_stmt = $pdo->prepare("SELECT * FROM sending_profiles WHERE id = ?");
+    $attachment_stmt = $pdo->prepare("SELECT * FROM email_attachments WHERE email_id = ?");
     $log_stmt = $pdo->prepare(
-        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, subject, status, status_info, debug_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO email_logs (id, profile_id, ip_address, submitted_at, sent_at, recipient_email, cc_email, bcc_email, subject, status, status_info, debug_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     $delete_stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ?");
 
@@ -96,6 +97,34 @@ try {
                     $mail->addCC($email['cc_email']);
                 }
 
+                if (!empty($email['bcc_email'])) {
+                    $bcc_emails = json_decode($email['bcc_email'], true);
+                    foreach ($bcc_emails as $bcc) {
+                        $mail->addBCC($bcc);
+                    }
+                }
+
+                // Fetch and add attachments
+                $attachment_stmt->execute([$email['id']]);
+                $attachments = $attachment_stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($attachments as $attachment) {
+                    if ($attachment['inline']) {
+                        $mail->addStringEmbeddedImage(
+                            $attachment['content'],
+                            $attachment['cid'],
+                            $attachment['filename'],
+                            PHPMailer::ENCODING_BINARY,
+                            $attachment['content_type']
+                        );
+                    } else {
+                        $mail->addStringAttachment(
+                            $attachment['content'],
+                            $attachment['filename'],
+                            PHPMailer::ENCODING_BINARY,
+                            $attachment['content_type']
+                        );
+                    }
+                }
                 // Content
                 $mail->isHTML(!empty($email['body_html']));
                 $mail->Subject = $email['subject'];
@@ -124,6 +153,7 @@ try {
             $status === 'sent' ? date('Y-m-d H:i:s') : null,
             $email['recipient_email'],
             $email['cc_email'],
+            $email['bcc_email'],
             $email['subject'],
             $status,
             $status_info,

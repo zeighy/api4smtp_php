@@ -54,6 +54,7 @@ CREATE TABLE `email_queue` (
   `send_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `recipient_email` VARCHAR(255) NOT NULL,
   `cc_email` VARCHAR(255) NULL,
+  `bcc_email` TEXT NULL,
   `subject` VARCHAR(255) NOT NULL,
   `body_html` TEXT,
   `body_text` TEXT,
@@ -71,6 +72,7 @@ CREATE TABLE `email_logs` (
   `sent_at` TIMESTAMP NULL,
   `recipient_email` VARCHAR(255) NOT NULL,
   `cc_email` VARCHAR(255) NULL,
+  `bcc_email` TEXT NULL,
   `subject` VARCHAR(255) NOT NULL,
   `status` ENUM('sent', 'failed', 'bounced') NOT NULL,
   `status_info` TEXT,
@@ -80,6 +82,17 @@ CREATE TABLE `email_logs` (
 
 -- Index for faster log pruning.
 CREATE INDEX `idx_sent_at` ON `email_logs`(`sent_at`);
+
+CREATE TABLE `email_attachments` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `email_id` VARCHAR(36) NOT NULL,
+  `filename` VARCHAR(255) NOT NULL,
+  `content_type` VARCHAR(255) NOT NULL,
+  `content` LONGBLOB NOT NULL,
+  `inline` BOOLEAN NOT NULL DEFAULT FALSE,
+  `cid` VARCHAR(255) NULL,
+  FOREIGN KEY (`email_id`) REFERENCES `email_queue`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Table to track API requests for rate limiting.
 -- This table will store IPs that have been temporarily blocked by the rate limiter.
