@@ -77,6 +77,44 @@ if (isset($json_data['cc_email']) && !$cc_email) {
     send_json_error(400, 'A valid `cc_email` must be provided if the key exists.');
 }
 
+$bcc_emails = $json_data['bcc_emails'] ?? [];
+if (!is_array($bcc_emails)) {
+    send_json_error(400, '`bcc_emails` must be an array of email addresses.');
+}
+foreach ($bcc_emails as $bcc_email) {
+    if (!filter_var($bcc_email, FILTER_VALIDATE_EMAIL)) {
+        send_json_error(400, 'Invalid email address in `bcc_emails` array: ' . $bcc_email);
+    }
+}
+
+$attachments = $json_data['attachments'] ?? [];
+if (!is_array($attachments)) {
+    send_json_error(400, '`attachments` must be an array of attachment objects.');
+}
+
+foreach ($attachments as $attachment) {
+    if (empty($attachment['filename']) || !is_string($attachment['filename'])) {
+        send_json_error(400, 'Each attachment must have a `filename` string.');
+    }
+    if (empty($attachment['content_type']) || !is_string($attachment['content_type'])) {
+        send_json_error(400, 'Each attachment must have a `content_type` string.');
+    }
+    if (empty($attachment['content']) || !is_string($attachment['content'])) {
+        send_json_error(400, 'Each attachment must have `content` as a base64 encoded string.');
+    }
+    if (base64_decode($attachment['content'], true) === false) {
+        send_json_error(400, 'Attachment `content` must be a valid base64 encoded string.');
+    }
+    if (isset($attachment['inline'])) {
+        if (!is_bool($attachment['inline'])) {
+            send_json_error(400, 'Attachment `inline` flag must be a boolean.');
+        }
+        if ($attachment['inline'] === true && (empty($attachment['cid']) || !is_string($attachment['cid']))) {
+            send_json_error(400, 'Inline attachments must have a `cid` string.');
+        }
+    }
+}
+
 if (!$profile_id) {
     send_json_error(400, '`profile_id` is required and must be an integer.');
 }
@@ -174,8 +212,9 @@ if ($profile_data['rate_limit_count'] > 0) {
 $message_id = bin2hex(random_bytes(18)); // Generate a 36-char UUID
 
 try {
+    $pdo->beginTransaction();
     $stmt = $pdo->prepare(
-        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, subject, body_html, body_text, send_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW()))"
+        "INSERT INTO email_queue (id, profile_id, ip_address, recipient_email, cc_email, bcc_email, subject, body_html, body_text, send_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW()))"
     );
     $stmt->execute([
         $message_id,
@@ -183,12 +222,28 @@ try {
         $client_ip,
         $to_email,
         $cc_email ?: null,
+        empty($bcc_emails) ? null : json_encode($bcc_emails),
         $subject,
         $body_html ?: null,
         $body_text ?: null,
         $send_at_time
     ]);
-
+    if (!empty($attachments)) {
+        $attachment_stmt = $pdo->prepare(
+            "INSERT INTO email_attachments (email_id, filename, content_type, content, `inline`, cid) VALUES (?, ?, ?, ?, ?, ?)"
+        );
+        foreach ($attachments as $attachment) {
+            $attachment_stmt->execute([
+                $message_id,
+                $attachment['filename'],
+                $attachment['content_type'],
+                base64_decode($attachment['content']),
+                $attachment['inline'] ?? false,
+                $attachment['cid'] ?? null,
+            ]);
+        }
+    }
+    $pdo->commit();
     http_response_code(202);
     echo json_encode(['status' => 'queued', 'message_id' => $message_id, 'send_at' => $send_at_time ?? date('Y-m-d H:i:s')]);
 

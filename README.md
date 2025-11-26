@@ -189,6 +189,8 @@ Tokens are generated from the Admin Panel under Profiles -> Manage Tokens.
 | `body_html`   | string  | No* | The HTML content of the email.          |
 | `body_text`   | string  | No* | The plain-text version of the email.    |
 | `cc_email`    | string  | No       | A CC recipient's email address.         |
+| `bcc_emails`  | array   | No       | An array of BCC recipient email addresses. |
+| `attachments` | array   | No       | An array of attachment objects. See below for details. |
 
 *At least one of body_html or body_text must be provided.
 
@@ -277,32 +279,48 @@ Status: Failed
 
 ## Attachments and Inline Images
 
-The current version of the API does not support file attachments or embedding inline images (CID attachments).
+The API supports file attachments and embedding inline images. To use this feature, you need to include an `attachments` array in your JSON payload. Each object in the array represents a single attachment and must have the following properties:
 
-The `/api/v1/send` endpoint is designed to accept a simple JSON payload with text-based content only and does not process file data, such as base64-encoded images.
+| Parameter      | Type    | Required | Description                                                                                              |
+| :------------- | :------ | :------- | :------------------------------------------------------------------------------------------------------- |
+| `filename`     | string  | Yes      | The name of the file (e.g., `invoice.pdf`).                                                              |
+| `content_type` | string  | Yes      | The MIME type of the file (e.g., `application/pdf`, `image/png`).                                        |
+| `content`      | string  | Yes      | The base64-encoded content of the file.                                                                  |
+| `inline`       | boolean | No       | Set to `true` to embed the image inline. Defaults to `false`.                                           |
+| `cid`          | string  | Yes*     | The Content ID, required when `inline` is `true`. Use this value in your HTML body: `<img src="cid:...">`. |
 
-**For Developers:** To implement this feature, the API endpoint (api/v1/send.php) and the background processor (background/process_queue.php) would need to be modified to handle file data. A possible implementation would involve extending the JSON payload to include an attachments array.
+### Example with Attachments and Inline Images
 
-Example Extended Payload:
+Here's an example of a request that includes a regular attachment and an inline image:
 
-```
+```json
 {
     "profile_id": 1,
     "to_email": "jane.doe@example.com",
-    "subject": "Email with Inline Image",
-    "body_html": "<h1>Hello!</h1><p>Here is our logo: <img src=\"cid:companylogo\"></p>",
-    "body_text": "Hello! Here is our logo.",
+    "cc_email": "manager@example.com",
+    "bcc_emails": [
+        "auditor@example.com",
+        "archive@example.com"
+    ],
+    "subject": "Your Invoice and Our Company Logo",
+    "body_html": "<h1>Hello!</h1><p>Please see your invoice attached.</p><p>Here is our company logo:</p><img src=\"cid:companylogo\">",
+    "body_text": "Hello! Please see your invoice attached. A company logo was also included.",
     "attachments": [
         {
+            "filename": "invoice-2023.pdf",
+            "content_type": "application/pdf",
+            "content": "JVBERi0xLjQKJ..."
+        },
+        {
             "filename": "logo.png",
-            "content_b64": "iVBORw0KGgoAAAANSUhEUg...",
+            "content_type": "image/png",
+            "content": "iVBORw0KGgoAAAANSUhEUg...",
+            "inline": true,
             "cid": "companylogo"
         }
     ]
 }
 ```
-
-In this example, content_b64 would be the base64-encoded string of the image, and the cid would link it to the <img> tag in the HTML body.
 
 
 # Security Considerations
