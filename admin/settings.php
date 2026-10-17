@@ -15,48 +15,43 @@ foreach ($settings_raw as $row) {
 $success_message = '';
 $error_message = '';
 
-// Handle form submission
+// Handle form submission (CSRF already verified by auth_check.php)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $admin_user = trim($_POST['admin_user']);
-    $new_password = $_POST['admin_password'];
-    $log_retention_days = filter_input(INPUT_POST, 'log_retention_days', FILTER_VALIDATE_INT);
+    $admin_user = isset($_POST['admin_user']) && is_string($_POST['admin_user']) ? trim($_POST['admin_user']) : '';
+    $new_password = isset($_POST['admin_password']) && is_string($_POST['admin_password']) ? $_POST['admin_password'] : '';
+    $log_retention_days = filter_input(INPUT_POST, 'log_retention_days', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 3650]]);
 
-    // Basic validation
-    if (empty($admin_user) || $log_retention_days === false) {
-        $error_message = "Please fill in all fields with valid values.";
+    if ($admin_user === '' || mb_strlen($admin_user) > 100 || $log_retention_days === false || $log_retention_days === null) {
+        $error_message = "Please fill in all fields with valid values (retention must be 1-3650 days).";
+    } elseif ($new_password !== '' && (strlen($new_password) < 12 || $new_password === 'password')) {
+        $error_message = "The new password must be at least 12 characters long.";
     } else {
         try {
-            // Start transaction
             $pdo->beginTransaction();
-
-            // Update admin username
-            $stmt_user = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'admin_user'");
-            $stmt_user->execute([$admin_user]);
-
-            // Update log retention days
-            $stmt_log = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'log_retention_days'");
-            $stmt_log->execute([$log_retention_days]);
-
-            // Update password if a new one is provided
-            if (!empty($new_password)) {
-                $password_hash = password_hash($new_password, PASSWORD_DEFAULT);
-                $stmt_pass = $pdo->prepare("UPDATE settings SET setting_value = ? WHERE setting_key = 'admin_pass_hash'");
-                $stmt_pass->execute([$password_hash]);
+            $upsert = $pdo->prepare("INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+            $upsert->execute(['admin_user', $admin_user]);
+            $upsert->execute(['log_retention_days', (string)$log_retention_days]);
+            if ($new_password !== '') {
+                $upsert->execute(['admin_pass_hash', password_hash($new_password, PASSWORD_DEFAULT)]);
             }
-
             $pdo->commit();
+
+            if ($new_password !== '') {
+                session_regenerate_id(true); // new credentials -> new session ID
+            }
             $success_message = "Settings updated successfully!";
-            // Re-fetch settings to display updated values
-            $stmt = $pdo->query("SELECT setting_key, setting_value FROM settings");
-            $settings_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $settings_raw = $pdo->query("SELECT setting_key, setting_value FROM settings")->fetchAll(PDO::FETCH_ASSOC);
             $settings = [];
             foreach ($settings_raw as $row) {
                 $settings[$row['setting_key']] = $row['setting_value'];
             }
-
         } catch (PDOException $e) {
-            $pdo->rollBack();
-            $error_message = "Database error: " . $e->getMessage();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            log_exception($e, 'settings.php');
+            $error_message = "A database error occurred. Check the server log for details.";
         }
     }
 }
@@ -81,16 +76,17 @@ require_once __DIR__ . '/includes/header.php';
 
     <div class="bg-white p-8 rounded-lg shadow-lg">
         <form action="settings.php" method="POST">
+            <?= csrf_field() ?>
             <!-- Admin Credentials -->
             <fieldset class="mb-8">
                 <legend class="text-xl font-semibold text-gray-700 border-b-2 border-gray-200 pb-2 mb-4">Admin Credentials</legend>
                 <div class="mb-4">
                     <label for="admin_user" class="block text-gray-700 text-sm font-bold mb-2">Admin Username:</label>
-                    <input type="text" id="admin_user" name="admin_user" value="<?= htmlspecialchars($settings['admin_user']) ?>" required class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
+                    <input type="text" id="admin_user" name="admin_user" value="<?= htmlspecialchars($settings['admin_user'] ?? '') ?>" required class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
                 </div>
                 <div class="mb-4">
                     <label for="admin_password" class="block text-gray-700 text-sm font-bold mb-2">New Password:</label>
-                    <input type="password" id="admin_password" name="admin_password" placeholder="Leave blank to keep current password" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
+                    <input type="password" id="admin_password" name="admin_password" placeholder="Leave blank to keep current password" minlength="12" autocomplete="new-password" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
                     <p class="text-xs text-gray-500">Only enter a value here if you want to change the password.</p>
                 </div>
             </fieldset>
@@ -100,7 +96,7 @@ require_once __DIR__ . '/includes/header.php';
                 <legend class="text-xl font-semibold text-gray-700 border-b-2 border-gray-200 pb-2 mb-4">Data Retention</legend>
                 <div class="mb-4">
                     <label for="log_retention_days" class="block text-gray-700 text-sm font-bold mb-2">Email Log Retention (Days):</label>
-                    <input type="number" id="log_retention_days" name="log_retention_days" value="<?= htmlspecialchars($settings['log_retention_days']) ?>" required min="1" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
+                    <input type="number" id="log_retention_days" name="log_retention_days" value="<?= htmlspecialchars($settings['log_retention_days'] ?? '30') ?>" required min="1" max="3650" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring focus:ring-blue-300">
                     <p class="text-xs text-gray-500">Email history logs older than this will be deleted automatically.</p>
                 </div>
             </fieldset>

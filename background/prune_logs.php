@@ -5,51 +5,42 @@ if (php_sapi_name() !== 'cli') {
 }
 
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../lib/helpers.php';
 
 echo "Starting email history pruning process... (" . date('Y-m-d H:i:s') . ")\n";
 
 try {
-    // 1. Fetch the log retention setting from the database
-    $stmt = $pdo->query("SELECT log_retention_days FROM settings WHERE id = 1");
-    $settings = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Settings are stored as key/value rows.
+    $stmt = $pdo->prepare("SELECT setting_value FROM settings WHERE setting_key = 'log_retention_days'");
+    $stmt->execute();
+    $value = $stmt->fetchColumn();
 
-    if (!$settings || !isset($settings['log_retention_days'])) {
+    if ($value === false) {
         echo "ERROR: Could not retrieve log retention settings from the database.\n";
         exit(1);
     }
 
-    $retention_days = (int)$settings['log_retention_days'];
+    $retention_days = (int)$value;
 
-    if ($retention_days <= 0) {
-        echo "Log retention is disabled or set to an invalid value (<= 0). No logs will be pruned.\n";
-        exit(0);
-    }
-
-    echo "Log retention period is set to {$retention_days} days.\n";
-
-    // 2. Prepare and execute the DELETE query
-    // We use DATE_SUB() to calculate the cutoff date
-    $delete_sql = "DELETE FROM email_history WHERE processed_at < DATE_SUB(NOW(), INTERVAL ? DAY)";
-    $delete_stmt = $pdo->prepare($delete_sql);
-    $delete_stmt->execute([$retention_days]);
-
-    // 3. Report the number of deleted rows
-    $deleted_rows_count = $delete_stmt->rowCount();
-
-    if ($deleted_rows_count > 0) {
-        echo "Successfully pruned {$deleted_rows_count} old log entries.\n";
+    if ($retention_days > 0) {
+        echo "Log retention period is set to {$retention_days} days.\n";
+        $delete = $pdo->prepare("DELETE FROM email_logs WHERE COALESCE(sent_at, submitted_at) < DATE_SUB(NOW(), INTERVAL ? DAY)");
+        $delete->execute([$retention_days]);
+        echo "Pruned {$delete->rowCount()} old log entries.\n";
     } else {
-        echo "No old log entries found to prune.\n";
+        echo "Log retention is disabled or invalid (<= 0). Email logs will not be pruned.\n";
     }
+
+    // Housekeeping for tables that should never grow unbounded.
+    $n = $pdo->exec("DELETE FROM rate_limit_tracker WHERE blocked_until < NOW()");
+    echo "Removed {$n} expired rate-limit blocks.\n";
+    $n = $pdo->exec("DELETE FROM auth_attempts WHERE created_at < NOW() - INTERVAL 1 DAY");
+    echo "Removed {$n} old authentication-attempt records.\n";
 
     echo "Pruning process finished successfully.\n";
     exit(0);
 
-} catch (PDOException $e) {
-    echo "DATABASE ERROR: " . $e->getMessage() . "\n";
-    exit(1); // Exit with a non-zero status code to indicate failure
-} catch (Exception $e) {
-    echo "A general error occurred: " . $e->getMessage() . "\n";
+} catch (Throwable $e) {
+    echo "ERROR: " . $e->getMessage() . "\n";
     exit(1);
 }
-?>

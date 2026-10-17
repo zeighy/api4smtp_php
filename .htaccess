@@ -1,0 +1,6 @@
+# Defence in depth for Apache. Best practice is still to point the web root at
+# a directory that exposes ONLY api/ and admin/ (see README).
+Options -Indexes
+<FilesMatch "(^config\.php(\.example)?$|\.sql$|^composer\.(json|lock)$|\.md$)">
+    Require all denied
+</FilesMatch>

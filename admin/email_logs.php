@@ -5,18 +5,17 @@ require_once __DIR__ . '/../config.php';
 $success_message = '';
 $error_message = '';
 
-// --- Handle Cancellation of a Queued Email ---
-if (isset($_GET['action']) && $_GET['action'] === 'cancel_queued' && isset($_GET['id'])) {
-    $id_to_cancel = $_GET['id'];
-    $stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ?");
-    if ($stmt->execute([$id_to_cancel])) {
-        // Redirect to show a success message and prevent resubmission.
-        header('Location: email_logs.php?view=queue&cancel_status=success');
-        exit;
-    } else {
-        header('Location: email_logs.php?view=queue&cancel_status=error');
-        exit;
+// --- Handle Cancellation of a Queued Email (POST + CSRF, verified by auth_check.php) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_queued') {
+    $id_to_cancel = $_POST['id'] ?? '';
+    $ok = false;
+    if (is_string($id_to_cancel) && preg_match('/^[0-9a-f]{36}$/', $id_to_cancel)) {
+        // Only cancel rows that no worker has claimed yet.
+        $stmt = $pdo->prepare("DELETE FROM email_queue WHERE id = ? AND status = 'queued'");
+        $ok = $stmt->execute([$id_to_cancel]) && $stmt->rowCount() > 0;
     }
+    header('Location: email_logs.php?view=queue&cancel_status=' . ($ok ? 'success' : 'error'));
+    exit;
 }
 
 // --- Display cancellation status messages ---
@@ -24,13 +23,13 @@ if (isset($_GET['cancel_status'])) {
     if ($_GET['cancel_status'] === 'success') {
         $success_message = 'The selected email has been successfully cancelled and removed from the queue.';
     } else {
-        $error_message = 'There was an error cancelling the email. Please try again.';
+        $error_message = 'The email could not be cancelled. It may already be sending or sent.';
     }
 }
 
 
 // --- Fetching Data & Filtering Logic ---
-$view = $_GET['view'] ?? 'history'; // Default to 'history'
+$view = (($_GET['view'] ?? '') === 'queue') ? 'queue' : 'history'; // whitelist
 
 // Get all sending profiles for the filter dropdown
 $profiles_stmt = $pdo->query("SELECT id, profile_name FROM sending_profiles ORDER BY profile_name");
@@ -38,14 +37,17 @@ $profiles = $profiles_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Pagination settings
 $limit = 25; // Records per page
-$page = isset($_GET['page']) && is_numeric($_GET['page']) ? (int)$_GET['page'] : 1;
+$page = max(1, min(1000000, (int)filter_var($_GET['page'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['default' => 1]])));
 $offset = ($page - 1) * $limit;
 
 // Filter parameters
-$filter_profile = $_GET['profile_id'] ?? '';
-$filter_status = $_GET['status'] ?? '';
-$filter_ip = $_GET['ip_address'] ?? '';
-$search_term = $_GET['search'] ?? '';
+$filter_profile = (string)(filter_var($_GET['profile_id'] ?? '', FILTER_VALIDATE_INT) ?: '');
+$filter_status = in_array($_GET['status'] ?? '', ['sent', 'failed'], true) ? $_GET['status'] : '';
+$filter_ip = is_string($_GET['ip_address'] ?? null) ? mb_substr($_GET['ip_address'], 0, 45) : '';
+$search_term = is_string($_GET['search'] ?? null) ? mb_substr($_GET['search'], 0, 255) : '';
+
+// Escape LIKE wildcards so user input is matched literally.
+$like = function (string $v): string { return '%' . addcslashes($v, '\\%_') . '%'; };
 
 // Build the WHERE clause for the query
 $where_clauses = [];
@@ -64,12 +66,12 @@ if ($view === 'history' && !empty($filter_status)) {
 }
 if (!empty($filter_ip)) {
     $where_clauses[] = "$table_alias.ip_address LIKE ?";
-    $params[] = "%" . $filter_ip . "%";
+    $params[] = $like($filter_ip);
 }
 if (!empty($search_term)) {
     $where_clauses[] = "($table_alias.recipient_email LIKE ? OR $table_alias.subject LIKE ?)";
-    $params[] = "%" . $search_term . "%";
-    $params[] = "%" . $search_term . "%";
+    $params[] = $like($search_term);
+    $params[] = $like($search_term);
 }
 
 $where_sql = count($where_clauses) > 0 ? "WHERE " . implode(' AND ', $where_clauses) : '';
@@ -81,7 +83,7 @@ if ($view === 'history') {
     $count_stmt = $pdo->prepare($count_sql);
     $count_stmt->execute($params);
     $total_records = $count_stmt->fetchColumn();
-    $total_pages = ceil($total_records / $limit);
+    $total_pages = max(1, (int)ceil($total_records / $limit));
 
     // --- Fetch records for the current page ---
     $logs_sql = "SELECT l.*, p.profile_name FROM email_logs l
@@ -101,7 +103,7 @@ if ($view === 'history') {
     $count_stmt = $pdo->prepare($count_sql);
     $count_stmt->execute($params);
     $total_records = $count_stmt->fetchColumn();
-    $total_pages = ceil($total_records / $limit);
+    $total_pages = max(1, (int)ceil($total_records / $limit));
 
     // --- Fetch records for the current page ---
     $logs_sql = "SELECT q.*, p.profile_name FROM email_queue q
@@ -162,7 +164,7 @@ require_once __DIR__ . '/includes/header.php';
                 <select id="profile-select" name="profile_id" class="p-2 border rounded-md w-full" onchange="this.form.submit()">
                     <option value="">All Profiles</option>
                     <?php foreach ($profiles as $profile): ?>
-                        <option value="<?= $profile['id'] ?>" <?= ($filter_profile == $profile['id']) ? 'selected' : '' ?>>
+                        <option value="<?= (int)$profile['id'] ?>" <?= ($filter_profile == $profile['id']) ? 'selected' : '' ?>>
                             <?= htmlspecialchars($profile['profile_name']) ?>
                         </option>
                     <?php endforeach; ?>
@@ -241,9 +243,12 @@ require_once __DIR__ . '/includes/header.php';
                                 <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= date('Y-m-d H:i', strtotime($row['send_at'])) ?></td>
                                 <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm"><?= date('Y-m-d H:i', strtotime($row['submitted_at'])) ?></td>
                                 <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
-                                    <a href="email_logs.php?action=cancel_queued&id=<?= $row['id'] ?>&view=queue"
-                                       class="text-red-600 hover:text-red-900"
-                                       onclick="return confirm('Are you sure you want to permanently cancel this email? This cannot be undone.');">Cancel</a>
+                                    <form action="email_logs.php" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to permanently cancel this email? This cannot be undone.');">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="action" value="cancel_queued">
+                                        <input type="hidden" name="id" value="<?= e($row['id']) ?>">
+                                        <button type="submit" class="text-red-600 hover:text-red-900">Cancel</button>
+                                    </form>
                                 </td>
                             <?php endif; ?>
                         </tr>
@@ -256,7 +261,7 @@ require_once __DIR__ . '/includes/header.php';
     <!-- Pagination -->
     <div class="px-5 py-5 bg-white border-t flex flex-col xs:flex-row items-center xs:justify-between">
         <span class="text-xs xs:text-sm text-gray-900">
-            Showing <?= $offset + 1 ?> to <?= min($offset + $limit, $total_records) ?> of <?= $total_records ?> Entries
+            Showing <?= $total_records ? $offset + 1 : 0 ?> to <?= min($offset + $limit, $total_records) ?> of <?= $total_records ?> Entries
         </span>
         <div class="inline-flex mt-2 xs:mt-0">
              <?php
@@ -265,10 +270,10 @@ require_once __DIR__ . '/includes/header.php';
                 unset($query_params['page']);
                 $query_string = http_build_query($query_params);
             ?>
-            <a href="?page=<?= max(1, $page - 1) ?>&<?= $query_string ?>" class="text-sm bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-l <?= $page <= 1 ? 'opacity-50 cursor-not-allowed' : '' ?>">
+            <a href="?page=<?= max(1, $page - 1) ?>&<?= e($query_string) ?>" class="text-sm bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-l <?= $page <= 1 ? 'opacity-50 cursor-not-allowed' : '' ?>">
                 Prev
             </a>
-            <a href="?page=<?= min($total_pages, $page + 1) ?>&<?= $query_string ?>" class="text-sm bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-r <?= $page >= $total_pages ? 'opacity-50 cursor-not-allowed' : '' ?>">
+            <a href="?page=<?= min($total_pages, $page + 1) ?>&<?= e($query_string) ?>" class="text-sm bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-r <?= $page >= $total_pages ? 'opacity-50 cursor-not-allowed' : '' ?>">
                 Next
             </a>
         </div>
@@ -336,6 +341,7 @@ function exportTableToCSV(filename) {
         for (let j = 0; j < cols.length - 1; j++) {
             // Clean the text content
             let data = cols[j].innerText.replace(/(\r\n|\n|\r)/gm, "").replace(/(\s\s)/gm, " ");
+            if (/^[=+\-@\t\r]/.test(data)) { data = "'" + data; } // Neutralise spreadsheet formulas
             data = data.replace(/"/g, '""'); // Escape double quotes
             row.push('"' + data + '"');
         }

@@ -16,13 +16,29 @@ define('DB_PASS', '');           // Your database password
 define('DB_CHARSET', 'utf8mb4');
 
 // --- Application Configuration ---
-// IMPORTANT: Change this to a random 32-character string.
-// This key is used to encrypt and decrypt SMTP passwords in the database.
-// You can generate one here: https://www.random.org/strings/
+// REQUIRED: a random secret of at least 32 characters. It encrypts the SMTP
+// passwords stored in the database. Generate one with:
+//     php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"
+// You may instead set the SMTP_MAILER_ENCRYPTION_KEY environment variable,
+// which takes precedence over the value below. The app refuses to encrypt or
+// decrypt while the placeholder is in place.
 define('ENCRYPTION_KEY', 'change-this-to-a-random-32-char-string');
 
+// --- Reverse proxies ---
+// Client-IP headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are only
+// trusted when the direct connection comes from one of these IPs/CIDRs.
+// Leave empty if the app is reached directly. Example for a local nginx and
+// Cloudflare-style setups: ['127.0.0.1', '::1', '10.0.0.0/8']
+define('TRUSTED_PROXIES', []);
+
+// Optional limit overrides (see lib/helpers.php for all names and defaults):
+// define('API_MAX_ATTACHMENTS', 10);
+// define('API_MAX_QUEUE_PER_PROFILE', 5000);
+
+// Never show PHP errors to visitors; they are written to the server log.
+ini_set('display_errors', '0');
+
 // --- PDO Database Connection ---
-// This section establishes the connection to the database.
 $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
 
 $options = [
@@ -34,36 +50,13 @@ $options = [
 try {
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
 } catch (\PDOException $e) {
-    // In a real production environment, you would log this error and
-    // show a generic error message to the user.
-    throw new \PDOException($e->getMessage(), (int)$e->getCode());
-}
-
-// --- Helper Functions (can be moved to a separate file later) ---
-
-/**
- * A simple encryption function.
- * @param string $string The string to encrypt.
- * @return string The encrypted string.
- */
-function simple_encrypt(string $string): string {
-    $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
-    $encrypted = openssl_encrypt($string, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
-    return base64_encode($encrypted . '::' . $iv);
-}
-
-/**
- * A simple decryption function.
- * @param string $string The string to decrypt.
- * @return string|false The decrypted string or false on failure.
- */
-function simple_decrypt(string $string) {
-    list($encrypted_data, $iv) = explode('::', base64_decode($string), 2);
-    if (!$iv) {
-        // Handle cases where decryption might fail if the format is wrong
-        return false;
+    // Log the details server-side; never expose host/user details to clients.
+    error_log('[smtp-mailer] Database connection failed: ' . $e->getMessage());
+    if (PHP_SAPI !== 'cli') {
+        http_response_code(500);
+        header('Content-Type: text/plain');
     }
-    return openssl_decrypt($encrypted_data, 'aes-256-cbc', ENCRYPTION_KEY, 0, $iv);
+    exit("Service unavailable: database connection failed.\n");
 }
 
-?>
+require_once __DIR__ . '/lib/helpers.php';

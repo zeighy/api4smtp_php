@@ -1,13 +1,15 @@
 <?php
-session_start();
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../lib/helpers.php';
+secure_session_start();
 
-// Unset all of the session variables
-$_SESSION = [];
+// Logging out changes state, so it requires a POST with a valid CSRF token.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_logged_in()) {
+    csrf_require();
+    destroy_session();
+    header('Location: login.php?logged_out=true');
+    exit;
+}
 
-// Destroy the session
-session_destroy();
-
-// Redirect to login page with a success message
-header('Location: login.php?logged_out=true');
+header('Location: ' . (is_logged_in() ? 'dashboard.php' : 'login.php'));
 exit;
-?>
