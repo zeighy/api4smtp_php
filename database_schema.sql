@@ -10,11 +10,12 @@ CREATE TABLE `settings` (
   `setting_value` TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert default settings. The admin password should be changed immediately.
--- Default password is 'password'. Hash generated with password_hash('password', PASSWORD_DEFAULT).
+-- Default settings. No admin password is shipped: set one with
+--   php bin/set_admin_password.php
+-- before the first login (an empty hash makes login impossible).
 INSERT INTO `settings` (`setting_key`, `setting_value`) VALUES
 ('admin_user', 'admin'),
-('admin_pass_hash', '$2y$10$DC3A2o65tT2zG81D1x..Q.o2y3.8Xn524.jV8v0R.V5p8dRo4gDve'),
+('admin_pass_hash', ''),
 ('log_retention_days', '30');
 
 -- Table for SMTP sending profiles.
@@ -42,6 +43,7 @@ CREATE TABLE `api_tokens` (
   `token_prefix` VARCHAR(10) NOT NULL UNIQUE,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `last_used_at` TIMESTAMP NULL,
+  `expires_at` TIMESTAMP NULL DEFAULT NULL,
   FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -56,10 +58,14 @@ CREATE TABLE `email_queue` (
   `cc_email` VARCHAR(255) NULL,
   `bcc_email` TEXT NULL,
   `subject` VARCHAR(255) NOT NULL,
-  `body_html` TEXT,
-  `body_text` TEXT,
+  `body_html` MEDIUMTEXT,
+  `body_text` MEDIUMTEXT,
   `status` ENUM('queued', 'processing') DEFAULT 'queued',
   `processing_attempts` INT DEFAULT 0,
+  `locked_by` VARCHAR(32) NULL COMMENT 'Worker run that claimed this row',
+  `locked_at` DATETIME NULL,
+  KEY `idx_queue_ready` (`status`, `send_at`),
+  KEY `idx_queue_rate` (`profile_id`, `ip_address`, `submitted_at`),
   FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -77,6 +83,7 @@ CREATE TABLE `email_logs` (
   `status` ENUM('sent', 'failed', 'bounced') NOT NULL,
   `status_info` TEXT,
   `debug_info` TEXT,
+  KEY `idx_logs_rate` (`profile_id`, `ip_address`, `submitted_at`),
   FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -107,3 +114,12 @@ CREATE TABLE `rate_limit_tracker` (
   KEY `profile_id` (`profile_id`),
   CONSTRAINT `rate_limit_tracker_ibfk_1` FOREIGN KEY (`profile_id`) REFERENCES `sending_profiles` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- Failed admin-login / API-token attempts, used for brute-force throttling.
+CREATE TABLE `auth_attempts` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `scope` VARCHAR(10) NOT NULL COMMENT 'login or api',
+  `ip_address` VARCHAR(45) NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_auth_lookup` (`scope`, `ip_address`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

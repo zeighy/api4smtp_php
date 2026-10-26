@@ -3,77 +3,76 @@ require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/includes/auth_check.php';
 
 $action = $_POST['action'] ?? $_GET['action'] ?? 'view';
-$profile_id = $_GET['id'] ?? $_POST['id'] ?? null;
+$action = is_string($action) ? $action : 'view';
+$profile_id = filter_var($_POST['id'] ?? $_GET['id'] ?? null, FILTER_VALIDATE_INT);
+$profile_id = $profile_id === false ? null : $profile_id;
 $error_message = '';
 $success_message = '';
 $profile_to_edit = null;
 
-// --- Handle Form Submissions (POST requests) ---
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Sanitize and retrieve form data
-    $profile_name = trim($_POST['profile_name']);
-    $from_name = trim($_POST['from_name']);
-    $from_email = filter_var(trim($_POST['from_email']), FILTER_VALIDATE_EMAIL);
-    $smtp_host = trim($_POST['smtp_host']);
-    $smtp_port = filter_var(trim($_POST['smtp_port']), FILTER_VALIDATE_INT);
-    $smtp_user = trim($_POST['smtp_user']);
-    $smtp_pass = trim($_POST['smtp_pass']); // Don't encrypt yet
-    $smtp_encryption = in_array($_POST['smtp_encryption'], ['none', 'ssl', 'tls']) ? $_POST['smtp_encryption'] : 'tls';
-    $rate_limit_count = filter_var(trim($_POST['rate_limit_count']), FILTER_VALIDATE_INT);
-    $rate_limit_interval = filter_var(trim($_POST['rate_limit_interval']), FILTER_VALIDATE_INT);
-    $rate_limit_strategy = in_array($_POST['rate_limit_strategy'], ['REJECT', 'DELAY']) ? $_POST['rate_limit_strategy'] : 'REJECT';
-
-    // --- Add new profile ---
-    if ($action === 'add') {
-        if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user && $smtp_pass) {
-            $encrypted_pass = simple_encrypt($smtp_pass);
-            $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_encryption, rate_limit_count, rate_limit_interval, rate_limit_strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            if ($stmt->execute([$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $encrypted_pass, $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy])) {
-                $success_message = 'Profile created successfully!';
-            } else {
-                $error_message = 'Failed to create profile.';
-            }
-        } else {
-            $error_message = 'Please fill in all required fields with valid data.';
-        }
-    }
-
-    // --- Update existing profile ---
-    elseif ($action === 'edit' && $profile_id) {
-        if ($profile_name && $from_name && $from_email && $smtp_host && $smtp_port && $smtp_user) {
-            $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy];
-
-            if (!empty($smtp_pass)) {
-                // If a new password is provided, encrypt it and update
-                $encrypted_pass = simple_encrypt($smtp_pass);
-                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=?, smtp_pass=? WHERE id=?");
-                array_push($params, $encrypted_pass, $profile_id);
-            } else {
-                // If password is blank, don't update it
-                $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=? WHERE id=?");
-                $params[] = $profile_id;
-            }
-
-            if ($stmt->execute($params)) {
-                $success_message = 'Profile updated successfully!';
-            } else {
-                $error_message = 'Failed to update profile.';
-            }
-        } else {
-            $error_message = 'Please fill in all required fields with valid data.';
-        }
-    }
+/** Trimmed string from $_POST, or '' when absent / not a string. */
+function post_str(string $key): string {
+    return isset($_POST[$key]) && is_string($_POST[$key]) ? trim($_POST[$key]) : '';
 }
 
-// --- Handle Deletion (GET request for simplicity, POST is better for production) ---
-if ($action === 'delete' && $profile_id) {
-    // Note: ON DELETE CASCADE/SET NULL in DB schema handles related tables
-    $stmt = $pdo->prepare("DELETE FROM sending_profiles WHERE id = ?");
-    if ($stmt->execute([$profile_id])) {
-        $success_message = 'Profile deleted successfully!';
-    } else {
-        $error_message = 'Failed to delete profile.';
+// --- Handle Form Submissions (POST requests; CSRF already verified by auth_check.php) ---
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $profile_name = post_str('profile_name');
+    $from_name = post_str('from_name');
+    $from_email = filter_var(post_str('from_email'), FILTER_VALIDATE_EMAIL);
+    $smtp_host = post_str('smtp_host');
+    $smtp_port = filter_var(post_str('smtp_port'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 65535]]);
+    $smtp_user = post_str('smtp_user');
+    $smtp_pass = isset($_POST['smtp_pass']) && is_string($_POST['smtp_pass']) ? $_POST['smtp_pass'] : ''; // not trimmed: may be significant
+    $smtp_encryption = in_array(post_str('smtp_encryption'), ['none', 'ssl', 'tls'], true) ? post_str('smtp_encryption') : 'tls';
+    $rate_limit_count = filter_var(post_str('rate_limit_count'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 1000000]]);
+    $rate_limit_interval = filter_var(post_str('rate_limit_interval'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 525600]]);
+    $rate_limit_strategy = in_array(post_str('rate_limit_strategy'), ['REJECT', 'DELAY'], true) ? post_str('rate_limit_strategy') : 'REJECT';
+
+    $valid = $profile_name !== '' && mb_strlen($profile_name) <= 255
+        && $from_name !== '' && mb_strlen($from_name) <= 255 && !preg_match('/[\r\n]/', $from_name)
+        && $from_email && strlen($from_email) <= 255
+        && is_valid_smtp_host($smtp_host)
+        && $smtp_port !== false
+        && $smtp_user !== '' && mb_strlen($smtp_user) <= 255
+        && $rate_limit_count !== false && $rate_limit_interval !== false;
+
+    try {
+        if ($action === 'add') {
+            if ($valid && $smtp_pass !== '') {
+                $stmt = $pdo->prepare("INSERT INTO sending_profiles (profile_name, from_name, from_email, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_encryption, rate_limit_count, rate_limit_interval, rate_limit_strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, encrypt_secret($smtp_pass), $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy]);
+                $success_message = 'Profile created successfully!';
+            } else {
+                $error_message = 'Please fill in all required fields with valid data (valid host name, port 1-65535, valid email).';
+            }
+        } elseif ($action === 'edit' && $profile_id) {
+            if ($valid) {
+                $params = [$profile_name, $from_name, $from_email, $smtp_host, $smtp_port, $smtp_user, $smtp_encryption, $rate_limit_count, $rate_limit_interval, $rate_limit_strategy];
+                if ($smtp_pass !== '') {
+                    $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=?, smtp_pass=? WHERE id=?");
+                    array_push($params, encrypt_secret($smtp_pass), $profile_id);
+                } else {
+                    $stmt = $pdo->prepare("UPDATE sending_profiles SET profile_name=?, from_name=?, from_email=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_encryption=?, rate_limit_count=?, rate_limit_interval=?, rate_limit_strategy=? WHERE id=?");
+                    $params[] = $profile_id;
+                }
+                $stmt->execute($params);
+                $success_message = 'Profile updated successfully!';
+            } else {
+                $error_message = 'Please fill in all required fields with valid data (valid host name, port 1-65535, valid email).';
+            }
+        } elseif ($action === 'delete' && $profile_id) {
+            // Deleting cascades to the profile's tokens, queued emails and logs.
+            $pdo->prepare("DELETE FROM sending_profiles WHERE id = ?")->execute([$profile_id]);
+            $success_message = 'Profile deleted successfully!';
+        }
+    } catch (RuntimeException $e) {
+        log_exception($e, 'profiles.php');
+        $error_message = 'The server encryption key is not configured correctly. See config.php.';
+    } catch (PDOException $e) {
+        log_exception($e, 'profiles.php');
+        $error_message = 'A database error occurred. Check the server log for details.';
     }
 }
 
@@ -112,9 +111,10 @@ include __DIR__ . '/includes/header.php';
             <?= $profile_to_edit ? 'Edit Profile' : 'Add New Profile' ?>
         </h2>
         <form action="profiles.php" method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <?= csrf_field() ?>
             <input type="hidden" name="action" value="<?= $profile_to_edit ? 'edit' : 'add' ?>">
             <?php if ($profile_to_edit): ?>
-                <input type="hidden" name="id" value="<?= $profile_to_edit['id'] ?>">
+                <input type="hidden" name="id" value="<?= (int)$profile_to_edit['id'] ?>">
             <?php endif; ?>
             
             <!-- Form Fields -->
@@ -217,9 +217,14 @@ include __DIR__ . '/includes/header.php';
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($profile['from_name']) ?> &lt;<?= htmlspecialchars($profile['from_email']) ?>&gt;</td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><?= htmlspecialchars($profile['smtp_host']) ?>:<?= htmlspecialchars($profile['smtp_port']) ?></td>
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                                    <a href="api_tokens.php?profile_id=<?= $profile['id'] ?>" class="text-green-600 hover:text-green-900">Manage Tokens</a>
-                                    <a href="profiles.php?action=edit&id=<?= $profile['id'] ?>" class="text-indigo-600 hover:text-indigo-900">Edit</a>
-                                    <a href="profiles.php?action=delete&id=<?= $profile['id'] ?>" class="text-red-600 hover:text-red-900" onclick="return confirm('Are you sure you want to delete this profile? This cannot be undone.');">Delete</a>
+                                    <a href="api_tokens.php?profile_id=<?= (int)$profile['id'] ?>" class="text-green-600 hover:text-green-900">Manage Tokens</a>
+                                    <a href="profiles.php?action=edit&id=<?= (int)$profile['id'] ?>" class="text-indigo-600 hover:text-indigo-900">Edit</a>
+                                    <form action="profiles.php" method="POST" class="inline" onsubmit="return confirm('Delete this profile? Its API tokens, queued emails and email logs will also be deleted. This cannot be undone.');">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="id" value="<?= (int)$profile['id'] ?>">
+                                        <button type="submit" class="text-red-600 hover:text-red-900">Delete</button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

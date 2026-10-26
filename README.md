@@ -51,6 +51,9 @@ Folder Structure
 │   ├── v1/
 │   │   ├── send.php
 │   │   └── status.php
+├── bin/                   # CLI helpers (set_admin_password.php)
+├── lib/                   # Shared helpers (sessions, CSRF, encryption, client IP)
+├── migrations/            # Upgrade SQL for existing installs
 ├── background/            # Scripts for cron jobs
 │   ├── process_queue.php
 │   └── prune_logs.php
@@ -119,16 +122,31 @@ define('DB_USER', 'your_db_user');
 define('DB_PASS', 'your_db_password');
 ```
 
-Crucially, generate a secure encryption key. You can use an online generator or a command-line tool. Do not use the default key.
+Crucially, generate a secure encryption key of **at least 32 characters**. The app refuses to encrypt or decrypt while the placeholder key is in place.
 ```
-// Example command to generate a key:
-// openssl rand -base64 32
-define('ENCRYPTION_KEY', 'your-super-secret-32-byte-random-string');
+php -r "echo bin2hex(random_bytes(32)), PHP_EOL;"
+define('ENCRYPTION_KEY', 'paste-the-generated-key-here');
 ```
+You can alternatively provide the key through the `SMTP_MAILER_ENCRYPTION_KEY` environment variable, which takes precedence.
+
+If the app sits behind a reverse proxy or CDN, list the proxy IPs/CIDRs in `TRUSTED_PROXIES`. Client-IP headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) are **ignored** unless the direct connection comes from one of these addresses, so clients cannot spoof their IP to dodge rate limits:
+```
+define('TRUSTED_PROXIES', ['127.0.0.1', '10.0.0.0/8']);
+```
+
+**Set the admin password.** No default password is shipped. Run this once before first login:
+```
+php bin/set_admin_password.php
+```
+
+**Upgrading an existing install?** Run `migrations/001_security_hardening.sql` against your database, then run `php bin/set_admin_password.php` (logins with the old default password `password` are now refused). Existing SMTP passwords keep working and are re-encrypted in the new authenticated format the first time they are used.
 
 4. Web Server Configuration (Apache Example)
 
-For security, it is highly recommended to configure your web server so that **only the `api/` directory is publicly accessible.**
+For security, point the web root so that **only `api/` (and optionally `admin/`) is reachable.** `config.php`, `lib/`, `bin/`, `background/`, `migrations/`, `vendor/` and `*.sql` must never be served. The bundled `.htaccess` files deny these on Apache; on nginx use rules such as:
+```
+location ~ ^/(config\.php|lib/|bin/|background/|migrations/|vendor/|database_schema\.sql|composer\.) { deny all; }
+```
 The `admin/` directory should be protected, for example by IP whitelist or HTTP Basic Authentication in addition to the application's own login.
 Alternatively, you can also just not expose `admin/` to the public internet but is accessible via Tailscale, ZeroTier, or Cloudflare Zero Trust.
 
@@ -156,12 +174,7 @@ Prune Old Logs (runs daily): This script cleans the database. Schedule it to run
 
 Access the admin panel by navigating to `https://yourdomain.com/admin/login.php`  assuming it is publicly accessible, or `http://192.168.0.99/admin/login.php` if only exposed to a local network. 
 
-**Default Credentials:** The initial login is stored in the settings table. By default, it is:
-
-- Username: admin
-- Password: password
-
-** IMPORTANT: Change the default password immediately from the Settings page after your first login. **
+**Credentials:** The username defaults to `admin`; the password is set with `php bin/set_admin_password.php` (minimum 12 characters). Failed logins are throttled per IP, sessions expire after 30 minutes idle / 8 hours total, and every admin form is CSRF protected.
 
 # API Documentation
 
@@ -183,7 +196,7 @@ Tokens are generated from the Admin Panel under Profiles -> Manage Tokens.
 
 | Parameter   | Type    | Required | Description                             |
 | :---------- | :------ | :------- | :-------------------------------------- |
-| `profile_id`  | integer | Yes      | The ID of the sending profile to use.   |
+| `profile_id`  | integer | No       | Optional. The profile is determined by the token; if sent, it must match. |
 | `to_email`    | string  | Yes      | The recipient's email address.          |
 | `subject`     | string  | Yes      | The subject of the email.               |
 | `body_html`   | string  | No* | The HTML content of the email.          |
@@ -325,13 +338,23 @@ Here's an example of a request that includes a regular attachment and an inline 
 
 # Security Considerations
 
+- API limits: request bodies are capped (default 30 MB), as are body size (1M chars), BCC count (50), attachment count (10), attachment size (10 MB each / 20 MB total) and queue depth per profile. Override any limit with a `define()` in `config.php` (see `lib/helpers.php`). Subjects containing line breaks are rejected. Failed token checks are throttled per IP.
+
+- Tokens can be created with an expiry (30/90/365 days) from the token page.
+
+- Queue delivery: temporary SMTP failures are retried with exponential backoff (up to 5 attempts); permanent 5xx rejections are logged as failed. SMTP debug logs are stored with AUTH credentials redacted and truncated to 20 KB.
+
+- Status API: `error_message` is generic; raw SMTP errors are visible only in the admin logs. Message IDs belonging to other profiles return 404.
+
+- Front-end assets: the admin UI loads Tailwind (Play CDN) and Font Awesome from CDNs. A CSP restricts script/style sources, but those CDN files are not SRI-pinned; self-host them for a locked-down deployment.
+
 - Admin Panel: The admin panel is the key to the application. Protect the /admin directory with additional server-level security, such as an IP whitelist in your .htaccess or Nginx config.
 
 - API Tokens: Treat API tokens like passwords. Do not expose them in client-side code. Store them securely on your application servers.
 
 - Encryption Key: The ENCRYPTION_KEY in `config.php` is used to encrypt and decrypt SMTP passwords. If this key is lost, you will have to re-enter all SMTP passwords. If it is compromised, an attacker with database access can decrypt your passwords. Back it up securely.
 
-- Environment Variable for Keys (Recommended): For enhanced security, avoid hardcoding the ENCRYPTION_KEY in `config.php` where it might be committed to version control. Instead, configure your server to provide it as an environment variable (e.g., using SetEnv in Apache's configuration or .htaccess). You would then modify `config.php` to read the key, for example: `define('ENCRYPTION_KEY', getenv('SMTP_MAILER_ENC_KEY'));`. This separates your code from your secrets.
+- Environment Variable for Keys (Recommended): set `SMTP_MAILER_ENCRYPTION_KEY` in the server/PHP-FPM environment; it takes precedence over `ENCRYPTION_KEY` in `config.php`. `config.php` is git-ignored, but keeping the secret out of the file entirely is safer.
 
 - HTTPS: Always run this application over HTTPS to protect all transmitted data, including login credentials and API tokens.
 

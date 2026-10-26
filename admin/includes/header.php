@@ -1,12 +1,10 @@
 <?php
-// Resume session to check login status
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/../../lib/helpers.php';
+secure_session_start();
 
 // Get the current script name to determine the active page
 $current_page = basename($_SERVER['SCRIPT_NAME']);
-$is_logged_in = isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'] === true;
+$is_logged_in = is_logged_in();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -63,9 +61,12 @@ $is_logged_in = isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'
                         </a>
                     </li>
                     <li class="mr-3 flex-1">
-                         <a href="logout.php" class="block py-1 md:py-3 pl-1 align-middle text-gray-400 no-underline hover:text-white border-b-2 border-gray-800 hover:border-red-500">
-                            <i class="fas fa-sign-out-alt fa-fw mr-3"></i><span class="pb-1 md:pb-0 text-sm">Logout</span>
-                        </a>
+                        <form action="logout.php" method="POST">
+                            <?= csrf_field() ?>
+                            <button type="submit" class="w-full text-left block py-1 md:py-3 pl-1 align-middle text-gray-400 no-underline hover:text-white border-b-2 border-gray-800 hover:border-red-500">
+                                <i class="fas fa-sign-out-alt fa-fw mr-3"></i><span class="pb-1 md:pb-0 text-sm">Logout</span>
+                            </button>
+                        </form>
                     </li>
                 </ul>
             </div>

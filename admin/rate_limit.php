@@ -14,8 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['release_id'])) {
             $stmt->execute([$release_id]);
             $success_message = "The IP address has been successfully released from the rate limit.";
         } catch (PDOException $e) {
-            // In a real app, you might want a more robust error message system
-            die("Database error: " . $e->getMessage());
+            log_exception($e, 'rate_limit.php');
+            die("A database error occurred. Check the server log for details.");
         }
     }
 }
@@ -80,7 +80,8 @@ require_once __DIR__ . '/includes/header.php';
                             </td>
                             <td class="px-5 py-5 border-b border-gray-200 bg-white text-sm">
                                 <form action="rate_limit.php" method="POST" onsubmit="return confirm('Are you sure you want to release this IP?');">
-                                    <input type="hidden" name="release_id" value="<?= $ip_info['id'] ?>">
+                                    <?= csrf_field() ?>
+                                    <input type="hidden" name="release_id" value="<?= (int)$ip_info['id'] ?>">
                                     <button type="submit" class="text-white bg-red-500 hover:bg-red-600 font-bold py-1 px-3 rounded-full text-xs transition duration-300">
                                         Release
                                     </button>
