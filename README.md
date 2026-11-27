@@ -68,7 +68,7 @@ Folder Structure
 # Setup Instructions
 
 **Prerequisites**
-- PHP 8.0+ (with pdo_mysql extension)
+- PHP 8.0+ with the `pdo_mysql`, `sodium`, `mbstring` and `openssl` extensions. `sodium` is often packaged separately (for example `php-sodium` on Alpine) and is missing from some slim images. Check with `php -m`.
 
 - MariaDB or MySQL Database Server
 
@@ -139,7 +139,17 @@ define('TRUSTED_PROXIES', ['127.0.0.1', '10.0.0.0/8']);
 php bin/set_admin_password.php
 ```
 
-**Upgrading an existing install?** Run `migrations/001_security_hardening.sql` against your database, then run `php bin/set_admin_password.php` (logins with the old default password `password` are now refused). Existing SMTP passwords keep working and are re-encrypted in the new authenticated format the first time they are used.
+**Upgrading an existing install?**
+
+1. Back up your database and `config.php`.
+2. Confirm the `sodium` extension is enabled (`php -m`). Without it, queued emails fail and sending profiles cannot be saved.
+3. Run the migrations you have not applied yet, in numeric order:
+   - `migrations/000_bcc_attachments.sql`: only if your database has no `email_attachments` table.
+   - `migrations/001_security_hardening.sql`: only if your database has no `auth_attempts` table.
+4. If you still use the old default password `password`, run `php bin/set_admin_password.php` (that password is now refused).
+5. If the app sits behind a reverse proxy, set `TRUSTED_PROXIES` in `config.php` (see above).
+
+Existing SMTP passwords keep working and are re-encrypted in the new authenticated format the first time they are used.
 
 4. Web Server Configuration (Apache Example)
 
