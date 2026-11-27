@@ -3,6 +3,10 @@
     "description": "A PHP web application for sending emails via SMTP with profile management and API.",
     "type": "project",
     "require": {
+        "ext-mbstring": "*",
+        "ext-openssl": "*",
+        "ext-pdo_mysql": "*",
+        "ext-sodium": "*",
         "php": ">=7.4",
         "phpmailer/phpmailer": "^6.5"
     },
